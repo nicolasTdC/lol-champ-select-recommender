@@ -202,7 +202,7 @@ def passes_strict_threshold(stats: PruneStats | None) -> bool:
 
 def passes_extrapolated_threshold(stats: PruneStats | None) -> bool:
     if stats is None:
-        return False
+        return 0 < MAX_LOSSES_FOR_LOW_SAMPLE
     if stats.games >= MIN_GAMES:
         return stats.win_rate >= MIN_WIN_RATE
     return stats.losses < MAX_LOSSES_FOR_LOW_SAMPLE
