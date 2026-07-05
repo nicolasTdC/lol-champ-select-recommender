@@ -17,6 +17,9 @@ from .draft_data import (
 )
 from .draft_model import build_model_class, require_torch
 from .player_pruning import (
+    MAX_LOSSES_FOR_LOW_SAMPLE,
+    MIN_GAMES,
+    MIN_WIN_RATE,
     PlayerPruneIndex,
     extrapolated_hard_prune_candidates,
     extrapolated_soft_prune_candidates,
@@ -349,7 +352,7 @@ class DraftRecommender:
         if not recommendations:
             return []
 
-        lines = ["Recommendations"]
+        lines = ["Recommendations", *self.recommendation_legend_lines()]
         lane_lines = self.lane_recommendation_lines()
         if lane_lines:
             lines.extend(lane_lines)
@@ -399,6 +402,9 @@ class DraftRecommender:
                     f"{_format_pick_list(recommendation.whitelisted_extrapolated_hard, static_data)}"
                 )
         return lines
+
+    def recommendation_legend_lines(self) -> list[str]:
+        return _pruning_legend_lines()
 
     def lane_recommendation_lines(self) -> list[str]:
         player_prune_index = getattr(self, "player_prune_index", None)
@@ -750,6 +756,16 @@ def _format_pick_list(picks: list[DraftPickRecommendation], static_data: StaticD
     if not picks:
         return "-"
     return ", ".join(f"{static_data.champion_name(pick.champion_id)} {pick.score:.0%}" for pick in picks)
+
+
+def _pruning_legend_lines() -> list[str]:
+    return [
+        "  Legend",
+        f"    Soft: {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR overall",
+        f"    Hard: Soft plus {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR in the recommended role",
+        f"    Extrapolated: also keeps <{MIN_GAMES} games when losses < {MAX_LOSSES_FOR_LOW_SAMPLE:g}; missing stats count as 0 games",
+        "    Whitelisted: same filters after the champion blacklist",
+    ]
 
 
 def _format_lane_list(lanes: list[tuple[str, Any]]) -> str:

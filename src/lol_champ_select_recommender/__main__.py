@@ -42,7 +42,11 @@ def main() -> int:
             phase = connection.gameflow_phase()
             session = connection.champ_select_session() if phase == "ChampSelect" else None
             recommendation_lines = (
-                ["Recommendations", *recommender.lane_recommendation_lines()]
+                [
+                    "Recommendations",
+                    *recommender.recommendation_legend_lines(),
+                    *recommender.lane_recommendation_lines(),
+                ]
                 if recommender and phase != "ChampSelect"
                 else None
             )

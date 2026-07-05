@@ -301,6 +301,13 @@ class DraftInferenceTest(unittest.TestCase):
         lines = recommender.recommend_lines({}, static_data)
 
         self.assertIn("Recommendations", lines)
+        self.assertIn("  Legend", lines)
+        self.assertIn("    Soft: 20+ games and 52%+ WR overall", lines)
+        self.assertIn("    Hard: Soft plus 20+ games and 52%+ WR in the recommended role", lines)
+        self.assertIn(
+            "    Extrapolated: also keeps <20 games when losses < 9.6; missing stats count as 0 games",
+            lines,
+        )
         self.assertIn("  Top", lines)
         self.assertIn("    Raw: Annie 60%, Olaf 30%", lines)
         self.assertIn("    Soft: Annie 70%", lines)
@@ -345,6 +352,7 @@ class DraftInferenceTest(unittest.TestCase):
 
         lines = recommender.recommend_lines({}, static_data)
 
+        self.assertIn("  Legend", lines)
         self.assertIn("  Lane", lines)
         self.assertIn("    Hard: Support 55% (22g)", lines)
         self.assertIn("    Soft: Jungle 70% (10g)", lines)
