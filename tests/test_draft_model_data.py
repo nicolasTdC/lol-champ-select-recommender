@@ -70,8 +70,8 @@ class DraftModelDataTest(unittest.TestCase):
         row_high = dict(feature_rows[0], info_difficulty="10")
 
         self.assertEqual(
-            coarse_bucket_value(row_low, vocab["numeric_bin_edges"]),
-            coarse_bucket_value(row_high, vocab["numeric_bin_edges"]),
+            coarse_bucket_value(row_low),
+            coarse_bucket_value(row_high),
         )
 
     def test_draft_dataset_can_upsample_rows_with_distinct_masks(self) -> None:

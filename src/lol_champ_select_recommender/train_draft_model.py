@@ -152,6 +152,7 @@ def main() -> int:
             criterion=criterion,
             coarse_criterion=coarse_criterion,
             coarse_loss_weight=args.coarse_loss_weight,
+            use_teacher_forcing_coarse=True,
             optimizer=optimizer,
             train=True,
         )
@@ -165,6 +166,7 @@ def main() -> int:
             criterion=criterion,
             coarse_criterion=coarse_criterion,
             coarse_loss_weight=args.coarse_loss_weight,
+            use_teacher_forcing_coarse=False,
             optimizer=None,
             train=False,
         )
@@ -299,6 +301,7 @@ def run_epoch(
     criterion,
     coarse_criterion,
     coarse_loss_weight: float,
+    use_teacher_forcing_coarse: bool,
     optimizer,
     train: bool,
 ) -> tuple[float, float, float, float, float]:
@@ -321,9 +324,10 @@ def run_epoch(
         role_index = torch.tensor([POSITION_ORDER.index(example.target_role) for example in examples], dtype=torch.long, device=device)
         target = torch.tensor([example.target for example in examples], dtype=torch.long, device=device)
         target_coarse = torch.tensor([example.target_coarse for example in examples], dtype=torch.long, device=device)
+        coarse_context_target = target_coarse if use_teacher_forcing_coarse else None
 
         with torch.set_grad_enabled(train):
-            outputs = model(feature_ids, query_index, role_index=role_index, target_coarse_index=target_coarse)
+            outputs = model(feature_ids, query_index, role_index=role_index, target_coarse_index=coarse_context_target)
             if isinstance(outputs, tuple):
                 logits, coarse_logits = outputs
             else:

@@ -84,16 +84,10 @@ def build_model_vocab(
         name: quantile_edges([to_float(row.get(name)) for row in champion_feature_rows], numeric_bins)
         for name in numeric_feature_names
     }
-    coarse_bucket_values = sorted(
-        {
-            coarse_bucket_value(row, numeric_bin_edges)
-            for row in champion_feature_rows
-            if coarse_bucket_value(row, numeric_bin_edges)
-        }
-    )
+    coarse_bucket_values = sorted({coarse_bucket_value(row) for row in champion_feature_rows if coarse_bucket_value(row)})
     coarse_bucket_to_id = {bucket: index for index, bucket in enumerate(coarse_bucket_values)}
     champion_id_to_coarse_bucket_id = {
-        str(int(row["champion_id"])): coarse_bucket_to_id.get(coarse_bucket_value(row, numeric_bin_edges), 0)
+        str(int(row["champion_id"])): coarse_bucket_to_id.get(coarse_bucket_value(row), 0)
         for row in champion_feature_rows
         if str(row.get("champion_id", "")).isdigit()
     }
@@ -319,44 +313,14 @@ def category_value(value: Any) -> str:
     return token if token else NONE_TOKEN
 
 
-COARSE_STAT_FEATURES = (
-    "info_attack",
-    "info_defense",
-    "info_magic",
-    "stat_armor",
-    "stat_armorperlevel",
-    "stat_attackdamage",
-    "stat_attackdamageperlevel",
-    "stat_attackrange",
-    "stat_attackspeed",
-    "stat_attackspeedperlevel",
-    "stat_hp",
-    "stat_hpperlevel",
-    "stat_hpregen",
-    "stat_hpregenperlevel",
-    "stat_movespeed",
-    "stat_mp",
-    "stat_mpperlevel",
-    "stat_mpregen",
-    "stat_mpregenperlevel",
-    "stat_spellblock",
-    "stat_spellblockperlevel",
-)
-
-
-def coarse_bucket_value(row: dict[str, Any], numeric_bin_edges: dict[str, list[float]]) -> str:
+def coarse_bucket_value(row: dict[str, Any]) -> str:
     parts = [
         category_value(row.get("primary_tag")),
         category_value(row.get("secondary_tag")),
         category_value(row.get("partype")),
         category_value(row.get("range_type")),
     ]
-    for feature_name in COARSE_STAT_FEATURES:
-        if feature_name not in numeric_bin_edges:
-            continue
-        value = to_float(row.get(feature_name))
-        parts.append(f"{feature_name}={numeric_bin_token(value, numeric_bin_edges[feature_name])}")
-    if all(part == NONE_TOKEN for part in parts[:4]):
+    if all(part == NONE_TOKEN for part in parts):
         return ""
     return "|".join(parts)
 
