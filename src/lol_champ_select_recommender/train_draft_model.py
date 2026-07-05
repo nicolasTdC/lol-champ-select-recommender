@@ -89,6 +89,15 @@ def main() -> int:
         print(f"Error: no champion features found in {args.champion_features}", file=sys.stderr)
         return 1
 
+    original_row_count = len(draft_rows)
+    draft_rows = filter_trainable_rows(draft_rows)
+    dropped_rows = original_row_count - len(draft_rows)
+    if dropped_rows:
+        print(f"Filtered draft rows: kept={len(draft_rows)} dropped_incomplete_winning_comps={dropped_rows}")
+    if not draft_rows:
+        print(f"Error: no trainable draft rows found in {args.dataset}", file=sys.stderr)
+        return 1
+
     champion_features = champion_features_by_id(feature_rows)
     if args.finetune_patch:
         draft_rows, finetune_summary = build_finetune_rows(
@@ -423,7 +432,7 @@ def filter_rows_for_finetuning(
     model_vocab: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     if model_vocab is None:
-        return list(rows)
+        return filter_trainable_rows(rows)
 
     known_champion_ids = {int(champion_id) for champion_id in model_vocab["champion_id_to_token_id"].keys()}
     filtered_rows: list[dict[str, Any]] = []
@@ -432,9 +441,23 @@ def filter_rows_for_finetuning(
         side = row.get(winning_side)
         if not isinstance(side, dict):
             continue
-        if all(to_int(side.get(role)) in known_champion_ids for role in POSITION_ORDER):
+        if all(to_int(side.get(role)) in known_champion_ids for role in POSITION_ORDER) and has_complete_winning_comp(row):
             filtered_rows.append(row)
     return filtered_rows
+
+
+def filter_trainable_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in rows if has_complete_winning_comp(row)]
+
+
+def has_complete_winning_comp(row: dict[str, Any]) -> bool:
+    winning_side = str(row.get("winning_side") or "")
+    if winning_side not in {"blue", "red"}:
+        return False
+    side = row.get(winning_side)
+    if not isinstance(side, dict):
+        return False
+    return all((to_int(side.get(role)) or 0) > 0 for role in POSITION_ORDER)
 
 
 def load_finetune_checkpoint(
