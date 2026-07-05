@@ -80,14 +80,43 @@ def main() -> int:
         print(f"Error: no champion features found in {args.champion_features}", file=sys.stderr)
         return 1
 
-    rng = random.Random(args.seed)
-    rng.shuffle(draft_rows)
+    checkpoint = None
+    if args.init_checkpoint:
+        checkpoint = torch.load(Path(args.init_checkpoint), map_location="cpu")
+        model_vocab = checkpoint["model_vocab"]
+        model_config = checkpoint["model_config"]
+    else:
+        model_vocab = None
+        model_config = None
+
+    champion_features = champion_features_by_id(feature_rows)
+
+    draft_rows = filter_rows_for_finetuning(draft_rows, model_vocab) if model_vocab is not None else draft_rows
+    if args.finetune_patch:
+        draft_rows, finetune_summary = build_finetune_rows(
+            draft_rows,
+            finetune_patch=args.finetune_patch,
+            historical_ratio=args.finetune_historical_ratio,
+            seed=args.seed,
+        )
+        print(
+            "Finetune mix: "
+            f"latest_patch={args.finetune_patch} "
+            f"latest_rows={finetune_summary['latest_rows']} "
+            f"historical_sampled={finetune_summary['historical_sampled']} "
+            f"historical_pool={finetune_summary['historical_rows']}"
+        )
+    else:
+        rng = random.Random(args.seed)
+        rng.shuffle(draft_rows)
+
     split_index = max(1, int(len(draft_rows) * (1 - args.val_split)))
     train_rows = draft_rows[:split_index]
     val_rows = draft_rows[split_index:] or draft_rows[: min(len(draft_rows), args.batch_size)]
 
-    model_vocab = build_model_vocab(train_rows, feature_rows, numeric_bins=args.numeric_bins)
-    champion_features = champion_features_by_id(feature_rows)
+    if model_vocab is None:
+        model_vocab = build_model_vocab(train_rows, feature_rows, numeric_bins=args.numeric_bins)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "model_vocab.json").write_text(json.dumps(model_vocab, indent=2, sort_keys=True), encoding="utf-8")
@@ -118,18 +147,34 @@ def main() -> int:
     )
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Using {device=}")
+    if model_config is None:
+        model_config = {
+            "shared_vocab_size": model_vocab["shared_vocab_size"],
+            "champion_vocab_size": model_vocab["champion_vocab_size"],
+            "d_model": args.d_model,
+            "num_heads": args.num_heads,
+            "num_layers": args.num_layers,
+            "dim_feedforward": args.dim_feedforward,
+            "dropout": args.dropout,
+            "use_role_heads": True,
+            "use_hierarchy": args.use_hierarchy,
+            "coarse_bucket_size": model_vocab["coarse_bucket_size"],
+        }
     model = SharedFeatureDraftTransformer(
-        shared_vocab_size=model_vocab["shared_vocab_size"],
-        champion_vocab_size=model_vocab["champion_vocab_size"],
-        coarse_bucket_size=model_vocab["coarse_bucket_size"],
-        d_model=args.d_model,
-        num_heads=args.num_heads,
-        num_layers=args.num_layers,
-        dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout,
-        use_role_heads=True,
-        use_hierarchy=args.use_hierarchy,
+        shared_vocab_size=model_config["shared_vocab_size"],
+        champion_vocab_size=model_config["champion_vocab_size"],
+        coarse_bucket_size=model_config.get("coarse_bucket_size", 0),
+        d_model=model_config["d_model"],
+        num_heads=model_config["num_heads"],
+        num_layers=model_config["num_layers"],
+        dim_feedforward=model_config["dim_feedforward"],
+        dropout=model_config["dropout"],
+        use_role_heads=bool(model_config.get("use_role_heads", False)),
+        use_hierarchy=bool(model_config.get("use_hierarchy", False)),
     ).to(device)
+    if checkpoint is not None:
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+        print(f"Loaded checkpoint from {args.init_checkpoint}")
     print(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = torch.nn.CrossEntropyLoss(
@@ -206,6 +251,9 @@ def main() -> int:
                 "champion_loss_weight_power": args.champion_loss_weight_power,
                 "label_smoothing": args.label_smoothing,
                 "coarse_loss_weight": args.coarse_loss_weight,
+                "init_checkpoint": args.init_checkpoint,
+                "finetune_patch": args.finetune_patch,
+                "finetune_historical_ratio": args.finetune_historical_ratio,
                 "lr_scheduler": args.lr_scheduler,
                 "lr_scheduler_factor": args.lr_scheduler_factor,
                 "lr_scheduler_patience": args.lr_scheduler_patience,
@@ -226,6 +274,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="data/processed/draft_dataset.jsonl")
     parser.add_argument("--champion-features", default="data/processed/champion_features.csv")
     parser.add_argument("--output-dir", default="data/models/draft_transformer")
+    parser.add_argument(
+        "--init-checkpoint",
+        help="Checkpoint to initialize weights and vocab from before finetuning.",
+    )
+    parser.add_argument(
+        "--finetune-patch",
+        help="If set, finetune on this patch and mix in historical replay rows.",
+    )
+    parser.add_argument(
+        "--finetune-historical-ratio",
+        type=float,
+        default=0.2,
+        help="Historical rows to mix in relative to the latest patch rows. Default: 0.2",
+    )
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -303,6 +365,53 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", help="Torch device override, e.g. cpu, cuda")
     return parser.parse_args()
+
+
+def filter_rows_for_finetuning(
+    rows: list[dict[str, Any]],
+    model_vocab: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if model_vocab is None:
+        return list(rows)
+
+    known_champion_ids = {int(champion_id) for champion_id in model_vocab["champion_id_to_token_id"].keys()}
+    filtered_rows: list[dict[str, Any]] = []
+    for row in rows:
+        winning_side = str(row.get("winning_side") or "")
+        side = row.get(winning_side)
+        if not isinstance(side, dict):
+            continue
+        if all(to_int(side.get(role)) in known_champion_ids for role in POSITION_ORDER):
+            filtered_rows.append(row)
+    return filtered_rows
+
+
+def build_finetune_rows(
+    rows: list[dict[str, Any]],
+    *,
+    finetune_patch: str,
+    historical_ratio: float,
+    seed: int,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    latest_rows = [row for row in rows if str(row.get("patch")) == str(finetune_patch)]
+    historical_rows = [row for row in rows if str(row.get("patch")) != str(finetune_patch)]
+    if not latest_rows:
+        raise ValueError(f"No rows found for finetune patch {finetune_patch}")
+
+    rng = random.Random(seed)
+    rng.shuffle(historical_rows)
+    historical_sample_count = min(
+        len(historical_rows),
+        max(0, int(round(len(latest_rows) * max(0.0, historical_ratio)))),
+    )
+    selected_rows = latest_rows + historical_rows[:historical_sample_count]
+    rng.shuffle(selected_rows)
+    return selected_rows, {
+        "latest_rows": len(latest_rows),
+        "historical_rows": len(historical_rows),
+        "historical_sampled": historical_sample_count,
+        "selected_rows": len(selected_rows),
+    }
 
 
 def run_epoch(

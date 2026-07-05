@@ -8,7 +8,9 @@ import torch
 
 from lol_champ_select_recommender.train_draft_model import DraftDataset
 from lol_champ_select_recommender.train_draft_model import build_champion_loss_weights
+from lol_champ_select_recommender.train_draft_model import build_finetune_rows
 from lol_champ_select_recommender.train_draft_model import build_lr_scheduler
+from lol_champ_select_recommender.train_draft_model import filter_rows_for_finetuning
 from lol_champ_select_recommender.train_draft_model import _macro_f1
 from lol_champ_select_recommender.train_draft_model import _mean_reciprocal_rank
 from lol_champ_select_recommender.train_draft_model import _topk_hits
@@ -207,6 +209,49 @@ class DraftModelDataTest(unittest.TestCase):
 
         self.assertAlmostEqual(_mean_reciprocal_rank(logits, target), 1.5)
         self.assertAlmostEqual(_macro_f1({1: 1, 2: 1}, {1: 1, 0: 1}, {1: 1},), 1 / 3)
+
+    def test_finetune_rows_mix_latest_with_historical_replay(self) -> None:
+        rows = [
+            {**sample_draft_row(), "match_id": "BR1_latest_1", "patch": "16.14"},
+            {**sample_draft_row(), "match_id": "BR1_latest_2", "patch": "16.14"},
+            {**sample_draft_row(), "match_id": "BR1_old_1", "patch": "16.13"},
+            {**sample_draft_row(), "match_id": "BR1_old_2", "patch": "16.12"},
+        ]
+
+        selected_rows, summary = build_finetune_rows(
+            rows,
+            finetune_patch="16.14",
+            historical_ratio=0.5,
+            seed=7,
+        )
+
+        self.assertEqual(summary["latest_rows"], 2)
+        self.assertEqual(summary["historical_sampled"], 1)
+        self.assertEqual(len(selected_rows), 3)
+        self.assertEqual(sum(1 for row in selected_rows if row["patch"] == "16.14"), 2)
+
+    def test_finetune_filter_drops_rows_with_unknown_target_champions(self) -> None:
+        draft_rows = [
+            sample_draft_row(),
+            {
+                **sample_draft_row(),
+                "match_id": "BR1_unknown",
+                "blue": {
+                    "top": 999,
+                    "jungle": 64,
+                    "middle": 103,
+                    "bottom": 145,
+                    "utility": 267,
+                },
+            },
+        ]
+        feature_rows = sample_feature_rows()
+        vocab = build_model_vocab(draft_rows, feature_rows, numeric_bins=4)
+
+        filtered_rows = filter_rows_for_finetuning(draft_rows, vocab)
+
+        self.assertEqual(len(filtered_rows), 1)
+        self.assertEqual(filtered_rows[0]["match_id"], "BR1_1")
 
 
 def sample_draft_row():
