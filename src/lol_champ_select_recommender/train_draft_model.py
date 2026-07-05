@@ -142,7 +142,7 @@ def main() -> int:
     best_val_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
         train_dataset.set_epoch(epoch)
-        train_loss, train_acc = run_epoch(
+        train_loss, train_acc, train_top5, train_top10, train_coarse_acc = run_epoch(
             torch,
             model,
             train_dataset,
@@ -155,7 +155,7 @@ def main() -> int:
             train=True,
         )
         val_dataset.set_epoch(epoch)
-        val_loss, val_acc = run_epoch(
+        val_loss, val_acc, val_top5, val_top10, val_coarse_acc = run_epoch(
             torch,
             model,
             val_dataset,
@@ -170,7 +170,11 @@ def main() -> int:
         print(
             f"epoch {epoch:03d} "
             f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
+            f"train_top5={train_top5:.4f} train_top10={train_top10:.4f} "
+            f"train_coarse_acc={train_coarse_acc:.4f} "
             f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} "
+            f"val_top5={val_top5:.4f} val_top10={val_top10:.4f} "
+            f"val_coarse_acc={val_coarse_acc:.4f} "
             f"lr={optimizer.param_groups[0]['lr']:.2e}"
         )
         if scheduler is not None:
@@ -296,10 +300,13 @@ def run_epoch(
     coarse_loss_weight: float,
     optimizer,
     train: bool,
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float, float]:
     model.train(train)
     total_loss = 0.0
     total_correct = 0
+    total_top5 = 0
+    total_top10 = 0
+    total_coarse_correct = 0
     total_examples = 0
 
     indices = list(range(len(dataset)))
@@ -331,12 +338,31 @@ def run_epoch(
 
         predictions = logits.argmax(dim=1)
         total_correct += int((predictions == target).sum().item())
+        total_top5 += _topk_hits(logits, target, k=5)
+        total_top10 += _topk_hits(logits, target, k=10)
+        if coarse_logits is not None:
+            coarse_predictions = coarse_logits.argmax(dim=1)
+            total_coarse_correct += int((coarse_predictions == target_coarse).sum().item())
         total_loss += float(loss.item()) * len(examples)
         total_examples += len(examples)
 
     if total_examples == 0:
-        return 0.0, 0.0
-    return total_loss / total_examples, total_correct / total_examples
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+    return (
+        total_loss / total_examples,
+        total_correct / total_examples,
+        total_top5 / total_examples,
+        total_top10 / total_examples,
+        total_coarse_correct / total_examples,
+    )
+
+
+def _topk_hits(logits, target, *, k: int) -> int:
+    if logits.numel() == 0:
+        return 0
+    k = min(k, logits.size(1))
+    _, topk = logits.topk(k, dim=1)
+    return int((topk == target.unsqueeze(1)).any(dim=1).sum().item())
 
 
 def build_champion_loss_weights(
