@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-import sys
 from typing import Any
 
 
@@ -79,13 +79,12 @@ class RequestLimiter:
                     self._updated_at = now
                     if self._tokens >= 1.0:
                         self._tokens -= 1.0
-                        return
+                        return total_wait
                     wait_seconds = max(0.0, (1.0 - self._tokens) / self.rate_per_second)
 
             if wait_seconds > 0:
                 total_wait += wait_seconds
                 time.sleep(wait_seconds)
-        return total_wait
 
     def backoff(self, seconds: float) -> None:
         if seconds <= 0:

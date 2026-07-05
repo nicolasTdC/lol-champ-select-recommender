@@ -17,7 +17,7 @@ from lol_champ_select_recommender.collect_ranked_matches import (
     resolve_download_workers,
     select_seed_players,
 )
-from lol_champ_select_recommender.riot_api import RiotApiClient, RiotApiError, parse_riot_id, region_for_platform
+from lol_champ_select_recommender.riot_api import RequestLimiter, RiotApiClient, RiotApiError, parse_riot_id, region_for_platform
 
 
 class RiotApiTest(unittest.TestCase):
@@ -139,6 +139,15 @@ class RiotApiTest(unittest.TestCase):
         self.assertEqual(resolve_download_workers("auto", 100), 4)
         self.assertEqual(resolve_download_workers("auto", 500), 8)
         self.assertEqual(resolve_download_workers("3", 500), 3)
+
+    def test_request_limiter_acquire_returns_wait_time(self) -> None:
+        limiter = RequestLimiter(rate_per_second=1.0, burst=1)
+        self.assertEqual(limiter.acquire(), 0.0)
+        with patch("lol_champ_select_recommender.riot_api.time.sleep") as mocked_sleep:
+            waited = limiter.acquire()
+
+        self.assertGreaterEqual(waited, 0.0)
+        mocked_sleep.assert_called()
 
 
 class FakeRiotClient:
