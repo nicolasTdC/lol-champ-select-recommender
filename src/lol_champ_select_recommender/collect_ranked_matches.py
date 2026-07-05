@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .aggregate_matches import _patch
+from .ddragon import load_static_data
 from .env import riot_api_key
 from .riot_api import RiotApiClient, RiotApiError, region_for_platform
 
@@ -22,9 +24,18 @@ APEX_TIERS = {"MASTER", "GRANDMASTER", "CHALLENGER"}
 def main() -> int:
     args = parse_args()
 
+    latest_patch = None
     try:
         platform = args.platform.lower()
         region = args.region or region_for_platform(platform)
+        if args.patch_mode == "latest":
+            static_data = load_static_data(args.language)
+            latest_patch = _patch(static_data.version)
+            if not latest_patch:
+                print(
+                    "Warning: could not determine the latest patch from Data Dragon; collecting all patches.",
+                    file=sys.stderr,
+                )
         client = RiotApiClient(
             api_key=riot_api_key(),
             request_rate_limit=args.request_rate_limit,
@@ -56,6 +67,8 @@ def main() -> int:
     print(f"Seed players:   {len(players)}")
     print(f"Matches/player: {args.matches_per_player}")
     print(f"Output:         {matches_dir}")
+    print(f"Page mode:      {args.page_mode}")
+    print(f"Patch mode:     {args.patch_mode}")
 
     estimated_downloads = len(players) * max(0, args.matches_per_player)
     download_workers = resolve_download_workers(args.download_workers, estimated_downloads)
@@ -67,6 +80,7 @@ def main() -> int:
     downloaded = 0
     skipped_existing = 0
     skipped_duplicate = 0
+    skipped_patch = 0
     player_errors = 0
     match_errors = 0
 
@@ -119,11 +133,32 @@ def main() -> int:
 
                 queued_for_player += 1
                 if download_executor is None:
-                    status, error = download_match(client, match_id, region, match_path, force=args.force)
-                    downloaded, match_errors = update_download_stats(status, error, downloaded, match_errors)
+                    status, error = download_match(
+                        client,
+                        match_id,
+                        region,
+                        match_path,
+                        force=args.force,
+                        latest_patch=latest_patch,
+                    )
+                    downloaded, match_errors, skipped_patch = update_download_stats(
+                        status,
+                        error,
+                        downloaded,
+                        match_errors,
+                        skipped_patch,
+                    )
                 else:
                     pending_downloads.append(
-                        download_executor.submit(download_match, client, match_id, region, match_path, args.force)
+                        download_executor.submit(
+                            download_match,
+                            client,
+                            match_id,
+                            region,
+                            match_path,
+                            args.force,
+                            latest_patch,
+                        )
                     )
 
             print(
@@ -134,7 +169,13 @@ def main() -> int:
         if download_executor is not None:
             for future in concurrent.futures.as_completed(pending_downloads):
                 status, error = future.result()
-                downloaded, match_errors = update_download_stats(status, error, downloaded, match_errors)
+                downloaded, match_errors, skipped_patch = update_download_stats(
+                    status,
+                    error,
+                    downloaded,
+                    match_errors,
+                    skipped_patch,
+                )
     finally:
         if download_executor is not None:
             download_executor.shutdown(wait=True, cancel_futures=False)
@@ -152,6 +193,9 @@ def main() -> int:
         "matches_per_player": args.matches_per_player,
         "download_workers": download_workers,
         "download_workers_mode": args.download_workers,
+        "page_mode": args.page_mode,
+        "patch_mode": args.patch_mode,
+        "latest_patch": latest_patch,
         "seed": args.seed,
         "ladder_entries": len(entries),
         "seed_players": len(players),
@@ -159,6 +203,7 @@ def main() -> int:
         "downloaded": downloaded,
         "skipped_existing": skipped_existing,
         "skipped_duplicate": skipped_duplicate,
+        "skipped_patch": skipped_patch,
         "player_errors": player_errors,
         "match_errors": match_errors,
         "match_sources": str(match_sources_path),
@@ -226,6 +271,23 @@ def parse_args() -> argparse.Namespace:
         help="League-V4 pages per tier/division for DIAMOND and below. Ignored for MASTER+. Default: 1",
     )
     parser.add_argument(
+        "--page-mode",
+        choices=("sequential", "random"),
+        default="sequential",
+        help="How to traverse ranked ladder pages. Default: sequential",
+    )
+    parser.add_argument(
+        "--patch-mode",
+        choices=("all", "latest"),
+        default="all",
+        help="Whether to keep all match patches or only the latest Data Dragon patch. Default: all",
+    )
+    parser.add_argument(
+        "--language",
+        default="en_US",
+        help="Data Dragon language used to resolve the latest patch. Default: en_US",
+    )
+    parser.add_argument(
         "--max-players",
         type=int,
         default=25,
@@ -291,6 +353,8 @@ def parse_args() -> argparse.Namespace:
 def collect_ladder_entries(client: RiotApiClient, args: argparse.Namespace) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     seen_puuids_or_summoner_ids: set[str] = set()
+    page_mode = getattr(args, "page_mode", "sequential")
+    seed = getattr(args, "seed", 1)
 
     for tier in args.tiers:
         tier = tier.upper()
@@ -307,7 +371,10 @@ def collect_ladder_entries(client: RiotApiClient, args: argparse.Namespace) -> l
 
         for division in args.divisions:
             division = division.upper()
-            for page in range(1, args.pages + 1):
+            pages = list(range(1, args.pages + 1))
+            if page_mode == "random":
+                random.Random(_page_order_seed(seed, tier, division)).shuffle(pages)
+            for page in pages:
                 entries.extend(
                     _collect_standard_ladder_page(
                         client,
@@ -320,6 +387,10 @@ def collect_ladder_entries(client: RiotApiClient, args: argparse.Namespace) -> l
                 )
 
     return entries
+
+
+def _page_order_seed(seed: int, tier: str, division: str) -> int:
+    return (seed * 1_000_003) + sum(ord(ch) for ch in f"{tier}:{division}")
 
 
 def _collect_standard_ladder_page(
@@ -406,6 +477,7 @@ def download_match(
     region: str,
     match_path: Path,
     force: bool,
+    latest_patch: str | None = None,
 ) -> tuple[str, str | None]:
     if match_path.exists() and not force:
         return "existing", None
@@ -414,6 +486,11 @@ def download_match(
         match = client.match_by_id(match_id, region)
     except RiotApiError as exc:
         return "error", f"{match_id}: {exc}"
+
+    if latest_patch:
+        match_patch = _patch(match.get("info", {}).get("gameVersion"))
+        if match_patch != latest_patch:
+            return "filtered_patch", None
 
     try:
         write_json(match_path, match)
@@ -427,14 +504,16 @@ def update_download_stats(
     error: str | None,
     downloaded: int,
     match_errors: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     if status == "downloaded":
-        return downloaded + 1, match_errors
+        return downloaded + 1, match_errors, 0
+    if status == "filtered_patch":
+        return downloaded, match_errors, 1
     if status == "error":
         match_errors += 1
         if error:
             print(f"  error {error}", file=sys.stderr)
-    return downloaded, match_errors
+    return downloaded, match_errors, 0
 
 
 def append_match_source(

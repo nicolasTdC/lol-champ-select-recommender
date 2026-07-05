@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import random
 import urllib.error
 import urllib.request
 import unittest
@@ -78,6 +79,24 @@ class RiotApiTest(unittest.TestCase):
         self.assertEqual(client.standard_calls, [("br1", "RANKED_SOLO_5x5", "DIAMOND", "I", 1)])
         self.assertEqual(client.apex_calls, [])
 
+    def test_collect_ladder_entries_can_shuffle_pages(self) -> None:
+        client = FakeRiotClient()
+        args = Namespace(
+            platform="br1",
+            queue="RANKED_SOLO_5x5",
+            tiers=["DIAMOND"],
+            divisions=["I"],
+            pages=3,
+            page_mode="random",
+            seed=7,
+        )
+
+        collect_ladder_entries(client, args)
+
+        expected_pages = [1, 2, 3]
+        random.Random((7 * 1_000_003) + sum(ord(ch) for ch in "DIAMOND:I")).shuffle(expected_pages)
+        self.assertEqual([call[-1] for call in client.standard_calls], expected_pages)
+
     def test_request_host_json_retries_429_before_succeeding(self) -> None:
         client = RiotApiClient(api_key="test-key", timeout=0.1)
         response = FakeHttpResponse(b'{"ok": true}')
@@ -133,6 +152,25 @@ class RiotApiTest(unittest.TestCase):
             self.assertEqual((status, error), ("existing", None))
             self.assertEqual(client.calls, [("BR1_1", "americas")])
 
+    def test_download_match_can_filter_to_latest_patch(self) -> None:
+        client = FakeMatchClient(
+            {
+                "latest": {"info": {"gameVersion": "16.13.4"}},
+                "old": {"info": {"gameVersion": "16.12.1"}},
+            }
+        )
+        with TemporaryDirectory() as tmpdir:
+            latest_path = Path(tmpdir) / "latest.json"
+            old_path = Path(tmpdir) / "old.json"
+
+            status, error = download_match(client, "latest", "americas", latest_path, force=False, latest_patch="16.13")
+            self.assertEqual((status, error), ("downloaded", None))
+            self.assertTrue(latest_path.exists())
+
+            status, error = download_match(client, "old", "americas", old_path, force=False, latest_patch="16.13")
+            self.assertEqual((status, error), ("filtered_patch", None))
+            self.assertFalse(old_path.exists())
+
     def test_resolve_download_workers_auto_scales_with_job_size(self) -> None:
         self.assertEqual(resolve_download_workers("auto", 0), 1)
         self.assertEqual(resolve_download_workers("auto", 10), 2)
@@ -165,12 +203,13 @@ class FakeRiotClient:
 
 
 class FakeMatchClient:
-    def __init__(self) -> None:
+    def __init__(self, payloads: dict[str, dict[str, object]] | None = None) -> None:
         self.calls = []
+        self.payloads = payloads or {"BR1_1": {"info": {"gameVersion": "16.13"}}}
 
     def match_by_id(self, match_id: str, region: str):
         self.calls.append((match_id, region))
-        return {"info": {"gameVersion": "16.13"}}
+        return self.payloads.get(match_id, {"info": {"gameVersion": "16.13"}})
 
 
 class FakeHttpResponse:
