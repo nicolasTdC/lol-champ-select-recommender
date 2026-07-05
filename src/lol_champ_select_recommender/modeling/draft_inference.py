@@ -761,10 +761,12 @@ def _format_pick_list(picks: list[DraftPickRecommendation], static_data: StaticD
 def _pruning_legend_lines() -> list[str]:
     return [
         "  Legend",
-        f"    Soft: {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR overall",
-        f"    Hard: Soft plus {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR in the recommended role",
-        f"    Extrapolated: also keeps <{MIN_GAMES} games when losses < {MAX_LOSSES_FOR_LOW_SAMPLE:g}; missing stats count as 0 games",
+        f"    Champion Soft: {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR overall",
+        f"    Champion Hard: Soft plus {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR in the recommended role",
+        f"    Champion Extrapolated: also keeps <{MIN_GAMES} games when losses < {MAX_LOSSES_FOR_LOW_SAMPLE:g}; missing stats count as 0 games",
         "    Whitelisted: same filters after the champion blacklist",
+        "    Lane Hard: 20+ games and 53%+ WR on that lane",
+        "    Lane Soft: <20 games and losses < 9.6 on that lane; missing lanes count as 0 games",
     ]
 
 

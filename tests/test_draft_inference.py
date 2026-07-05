@@ -302,12 +302,14 @@ class DraftInferenceTest(unittest.TestCase):
 
         self.assertIn("Recommendations", lines)
         self.assertIn("  Legend", lines)
-        self.assertIn("    Soft: 20+ games and 52%+ WR overall", lines)
-        self.assertIn("    Hard: Soft plus 20+ games and 52%+ WR in the recommended role", lines)
+        self.assertIn("    Champion Soft: 20+ games and 52%+ WR overall", lines)
+        self.assertIn("    Champion Hard: Soft plus 20+ games and 52%+ WR in the recommended role", lines)
         self.assertIn(
-            "    Extrapolated: also keeps <20 games when losses < 9.6; missing stats count as 0 games",
+            "    Champion Extrapolated: also keeps <20 games when losses < 9.6; missing stats count as 0 games",
             lines,
         )
+        self.assertIn("    Lane Hard: 20+ games and 53%+ WR on that lane", lines)
+        self.assertIn("    Lane Soft: <20 games and losses < 9.6 on that lane; missing lanes count as 0 games", lines)
         self.assertIn("  Top", lines)
         self.assertIn("    Raw: Annie 60%, Olaf 30%", lines)
         self.assertIn("    Soft: Annie 70%", lines)
@@ -355,7 +357,7 @@ class DraftInferenceTest(unittest.TestCase):
         self.assertIn("  Legend", lines)
         self.assertIn("  Lane", lines)
         self.assertIn("    Hard: Support 55% (22g)", lines)
-        self.assertIn("    Soft: Jungle 70% (10g)", lines)
+        self.assertIn("    Soft: Bot 0% (0g), Mid 0% (0g), Jungle 70% (10g)", lines)
 
     def test_recommend_lines_show_whitelisted_views(self) -> None:
         static_data = StaticData(
