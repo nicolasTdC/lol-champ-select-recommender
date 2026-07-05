@@ -9,6 +9,7 @@ import torch
 from lol_champ_select_recommender.train_draft_model import DraftDataset
 from lol_champ_select_recommender.train_draft_model import build_champion_loss_weights
 from lol_champ_select_recommender.train_draft_model import build_lr_scheduler
+from lol_champ_select_recommender.modeling.draft_model import build_model_class
 from lol_champ_select_recommender.modeling.draft_data import (
     NONE_TOKEN,
     PICK_TOKEN,
@@ -117,6 +118,25 @@ class DraftModelDataTest(unittest.TestCase):
         scheduler = build_lr_scheduler(torch, optimizer, args)
 
         self.assertIsNone(scheduler)
+
+    def test_model_can_use_role_specific_heads(self) -> None:
+        SharedFeatureDraftTransformer = build_model_class()
+        model = SharedFeatureDraftTransformer(
+            shared_vocab_size=16,
+            champion_vocab_size=6,
+            d_model=8,
+            num_heads=1,
+            num_layers=1,
+            dim_feedforward=16,
+            dropout=0.0,
+            use_role_heads=True,
+        )
+
+        feature_ids = torch.randint(0, 16, (2, 5, 4))
+        query_index = torch.tensor([0, 4])
+        logits = model(feature_ids, query_index)
+
+        self.assertEqual(tuple(logits.shape), (2, 6))
 
 
 def sample_draft_row():

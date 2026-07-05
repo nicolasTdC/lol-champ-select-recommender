@@ -102,8 +102,9 @@ class DraftRecommender:
             num_layers=model_config["num_layers"],
             dim_feedforward=model_config["dim_feedforward"],
             dropout=model_config["dropout"],
+            use_role_heads=bool(model_config.get("use_role_heads", False)),
         )
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
 
         resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(torch.device(resolved_device))

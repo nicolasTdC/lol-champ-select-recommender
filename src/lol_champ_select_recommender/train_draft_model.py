@@ -126,9 +126,13 @@ def main() -> int:
         num_layers=args.num_layers,
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
+        use_role_heads=True,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    criterion = torch.nn.CrossEntropyLoss(weight=champion_loss_weights.to(device) if champion_loss_weights is not None else None)
+    criterion = torch.nn.CrossEntropyLoss(
+        weight=champion_loss_weights.to(device) if champion_loss_weights is not None else None,
+        label_smoothing=args.label_smoothing,
+    )
     scheduler = build_lr_scheduler(torch, optimizer, args)
 
     best_val_loss = float("inf")
@@ -174,6 +178,7 @@ def main() -> int:
                 "num_layers": args.num_layers,
                 "dim_feedforward": args.dim_feedforward,
                 "dropout": args.dropout,
+                "use_role_heads": True,
             },
             "model_vocab": model_vocab,
             "epoch": epoch,
@@ -181,6 +186,7 @@ def main() -> int:
             "special_champion_tokens": SPECIAL_CHAMPION_TOKENS,
             "train_config": {
                 "champion_loss_weight_power": args.champion_loss_weight_power,
+                "label_smoothing": args.label_smoothing,
                 "lr_scheduler": args.lr_scheduler,
                 "lr_scheduler_factor": args.lr_scheduler_factor,
                 "lr_scheduler_patience": args.lr_scheduler_patience,
@@ -205,6 +211,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument(
+        "--label-smoothing",
+        type=float,
+        default=0.05,
+        help="Cross-entropy label smoothing. Default: 0.05",
+    )
     parser.add_argument(
         "--lr-scheduler",
         choices=("none", "plateau"),

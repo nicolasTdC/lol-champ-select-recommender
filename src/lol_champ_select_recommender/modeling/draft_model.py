@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..roles import POSITION_ORDER
+
 
 class MissingTorchError(RuntimeError):
     pass
@@ -31,6 +33,7 @@ def build_model_class():
             num_layers: int = 2,
             dim_feedforward: int = 256,
             dropout: float = 0.1,
+            use_role_heads: bool = True,
         ) -> None:
             super().__init__()
             self.embedding = nn.Embedding(shared_vocab_size, d_model)
@@ -45,12 +48,24 @@ def build_model_class():
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
             self.output_norm = nn.LayerNorm(d_model)
             self.output = nn.Linear(d_model, champion_vocab_size)
+            self.role_outputs = nn.ModuleDict(
+                {role: nn.Linear(d_model, champion_vocab_size) for role in POSITION_ORDER}
+            )
+            self.use_role_heads = use_role_heads
 
         def forward(self, feature_ids, query_index):
             embedded = self.embedding(feature_ids).sum(dim=2)
             encoded = self.encoder(embedded)
             batch_index = torch.arange(encoded.size(0), device=encoded.device)
             query_hidden = encoded[batch_index, query_index]
-            return self.output(self.output_norm(query_hidden))
+            hidden = self.output_norm(query_hidden)
+            if not self.use_role_heads:
+                return self.output(hidden)
+
+            role_logits = []
+            for row_index, role_index in enumerate(query_index.tolist()):
+                role = POSITION_ORDER[int(role_index)]
+                role_logits.append(self.role_outputs[role](hidden[row_index]))
+            return torch.stack(role_logits, dim=0)
 
     return SharedFeatureDraftTransformer
