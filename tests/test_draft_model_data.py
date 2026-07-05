@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import random
 import unittest
+from unittest.mock import patch
 
+from lol_champ_select_recommender.train_draft_model import DraftDataset
 from lol_champ_select_recommender.modeling.draft_data import (
     NONE_TOKEN,
     PICK_TOKEN,
@@ -51,6 +53,31 @@ class DraftModelDataTest(unittest.TestCase):
         )
         primary_tag_feature_index = vocab["token_features"].index("primary_tag")
         self.assertEqual(query_features[primary_tag_feature_index], expected_static_id)
+
+    def test_draft_dataset_can_upsample_rows_with_distinct_masks(self) -> None:
+        draft_rows = [sample_draft_row()]
+        feature_rows = sample_feature_rows()
+        vocab = build_model_vocab(draft_rows, feature_rows, numeric_bins=4)
+        features = champion_features_by_id(feature_rows)
+        dataset = DraftDataset(
+            draft_rows,
+            vocab,
+            features,
+            mask_probability=1.0,
+            unk_probability=0.0,
+            seed=123,
+            examples_per_row=3,
+        )
+
+        self.assertEqual(len(dataset), 3)
+        dataset.set_epoch(1)
+        with patch("lol_champ_select_recommender.train_draft_model.build_training_example") as mock_build:
+            mock_build.side_effect = lambda *args, **kwargs: kwargs["rng"].random()
+            sample_a = dataset[0]
+            sample_b = dataset[1]
+
+        self.assertNotEqual(sample_a, sample_b)
+        self.assertEqual(mock_build.call_count, 2)
 
 
 def sample_draft_row():

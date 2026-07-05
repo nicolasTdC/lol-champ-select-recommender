@@ -28,6 +28,7 @@ class DraftDataset:
         mask_probability: float,
         unk_probability: float,
         seed: int,
+        examples_per_row: int = 1,
     ) -> None:
         self.rows = rows
         self.model_vocab = model_vocab
@@ -35,18 +36,21 @@ class DraftDataset:
         self.mask_probability = mask_probability
         self.unk_probability = unk_probability
         self.seed = seed
+        self.examples_per_row = max(1, examples_per_row)
         self.epoch = 0
 
     def __len__(self) -> int:
-        return len(self.rows)
+        return len(self.rows) * self.examples_per_row
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch
 
     def __getitem__(self, index: int):
-        rng = random.Random(self.seed + self.epoch * 1_000_003 + index)
+        row_index = index // self.examples_per_row
+        repeat_index = index % self.examples_per_row
+        rng = random.Random(self.seed + self.epoch * 1_000_003 + row_index * 10_000 + repeat_index)
         return build_training_example(
-            self.rows[index],
+            self.rows[row_index],
             self.model_vocab,
             self.champion_features,
             rng=rng,
@@ -93,6 +97,7 @@ def main() -> int:
         mask_probability=args.mask_probability,
         unk_probability=args.unk_probability,
         seed=args.seed,
+        examples_per_row=args.train_examples_per_row,
     )
     val_dataset = DraftDataset(
         val_rows,
@@ -101,6 +106,7 @@ def main() -> int:
         mask_probability=args.mask_probability,
         unk_probability=args.unk_probability,
         seed=args.seed + 17,
+        examples_per_row=1,
     )
 
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -190,6 +196,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unk-probability", type=float, default=0.03)
     parser.add_argument("--numeric-bins", type=int, default=8)
     parser.add_argument("--val-split", type=float, default=0.15)
+    parser.add_argument(
+        "--train-examples-per-row",
+        type=int,
+        default=1,
+        help="How many masked training examples to draw from each match row per epoch. Default: 1",
+    )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", help="Torch device override, e.g. cpu, cuda")
     return parser.parse_args()
