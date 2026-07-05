@@ -256,3 +256,45 @@ val_mrr   ~ 0.1795
 - `batch_size=8` was worse; `batch_size=32` was competitive but not a clear win.
 - Label smoothing and champion-loss reweighting were not decisive. The no-smoothing/no-weight run was competitive enough that this is not a strong lever yet.
 - Net: the model is still data-limited more than architecture-limited. The current best short-run point is the small model or low-LR variant, but the gains are small enough that I would not treat them as a hard baseline change yet.
+
+## 2026-07-05 - Bigger corpus model size sweep
+
+Dataset:
+
+```text
+data/processed/draft_dataset.jsonl rows: 16033
+```
+
+Shared config:
+
+```text
+--use-hierarchy --epochs 6 --batch-size 16 --lr 3e-4 --weight-decay 0.01
+--label-smoothing 0.03 --coarse-loss-weight 0.3 --champion-loss-weight-power 0.35
+--train-examples-per-row 4 --numeric-bins 10 --mask-probability 0.25 --unk-probability 0.03
+--train-fraction 0.35 --eval-fraction 1.0 --val-split 0.15 --seed 1
+```
+
+Raw generated logs:
+
+```text
+data/experiments/bigger_corpus_size_sweep_2026-07-05_123555.log
+data/experiments/bigger_corpus_size_sweep_2026-07-05_123555.summary.tsv
+```
+
+Peak validation metrics, selected by best `val_top10` epoch per run:
+
+| Config | Best epoch | Top-10 | Top-5 | Acc | MRR | Macro F1 | Best loss |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `d64_l2_ff256` | 6 | 0.4146 | 0.2432 | 0.0657 | 0.1722 | 0.0056 | 4.8831 |
+| `d128_l4_ff512` | 4 | 0.4158 | 0.2437 | 0.0628 | 0.1715 | 0.0098 | 4.8903 |
+| `d192_l4_ff768` | 6 | 0.4233 | 0.2620 | 0.0599 | 0.1690 | 0.0079 | 4.8754 |
+| `d256_l4_ff1024` | 6 | 0.4195 | 0.2457 | 0.0553 | 0.1672 | 0.0135 | 4.8890 |
+| `d384_l4_ff1536` | 6 | 0.4262 | 0.2482 | 0.0628 | 0.1690 | 0.0100 | 4.8932 |
+
+Conclusion:
+
+- The only configs that materially matter right now are model capacity, learning rate, batch size, label smoothing, champion frequency weighting, and the hierarchy/coarse-loss controls. The other flags should stay fixed for comparability until these are settled.
+- On the bigger corpus, extra width helps top-10 a little, but not cleanly: `d384` wins top-10, while `d192` wins top-5 and validation loss.
+- `d256` is dominated by `d192` and `d384`, so it is not a good main pretrain target.
+- For the main pretrain, prefer `d192_l4_ff768` as the balanced config if runtime/VRAM matter. Use `d384_l4_ff1536` only if optimizing specifically for top-10 candidate recall.
+- Keep `lr=3e-4`, `batch_size=16`, `label_smoothing=0.03`, `champion_loss_weight_power=0.35`, and `coarse_loss_weight=0.3` for the next main pretrain unless a dedicated sweep contradicts them on the full corpus.
