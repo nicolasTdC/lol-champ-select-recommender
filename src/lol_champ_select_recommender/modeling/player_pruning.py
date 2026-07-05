@@ -104,6 +104,37 @@ def prune_candidates(
     return kept
 
 
+def soft_prune_candidates(
+    champion_ids: list[int],
+    *,
+    prune_index: PlayerPruneIndex | None,
+) -> list[int]:
+    if prune_index is None:
+        return champion_ids
+
+    kept: list[int] = []
+    for champion_id in champion_ids:
+        if prune_index.passes_soft(champion_id):
+            kept.append(champion_id)
+    return kept
+
+
+def hard_prune_candidates(
+    champion_ids: list[int],
+    *,
+    role: str,
+    prune_index: PlayerPruneIndex | None,
+) -> list[int]:
+    if prune_index is None:
+        return champion_ids
+
+    kept: list[int] = []
+    for champion_id in champion_ids:
+        if prune_index.passes_soft(champion_id) and prune_index.passes_hard(champion_id, role):
+            kept.append(champion_id)
+    return kept
+
+
 def passes_threshold(stats: PruneStats | None) -> bool:
     if stats is None:
         return False

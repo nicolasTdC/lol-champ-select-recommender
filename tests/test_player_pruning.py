@@ -20,6 +20,8 @@ class PlayerPruningTest(unittest.TestCase):
                         "alice,1,Annie,jungle,Jungle,3,1,2,0.3333",
                         "bob,2,Olaf,top,Top,21,10,11,0.4762",
                         "bob,3,Galio,top,Top,19,8,11,0.4211",
+                        "bob,4,Shen,top,Top,19,10,9,0.5263",
+                        "bob,5,Sett,top,Top,19,8,11,0.4211",
                         "bob,1,Annie,utility,Support,1,1,0,1.0000",
                     ]
                 ),
@@ -37,6 +39,10 @@ class PlayerPruningTest(unittest.TestCase):
         self.assertFalse(index.passes_hard(2, "top"))
         self.assertFalse(index.passes_soft(3))
         self.assertFalse(index.passes_hard(3, "top"))
+        self.assertTrue(index.passes_soft(4))
+        self.assertTrue(index.passes_hard(4, "top"))
+        self.assertFalse(index.passes_soft(5))
+        self.assertFalse(index.passes_hard(5, "top"))
         self.assertEqual(prune_candidates([1, 2, 3], role="top", prune_index=index), [1])
 
 

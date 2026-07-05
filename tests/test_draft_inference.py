@@ -4,7 +4,13 @@ import unittest
 
 from lol_champ_select_recommender.ddragon import StaticData
 from lol_champ_select_recommender.modeling.draft_data import build_model_vocab, champion_features_by_id
-from lol_champ_select_recommender.modeling.draft_inference import build_live_queries, infer_my_side
+from lol_champ_select_recommender.modeling.draft_inference import (
+    DraftPickRecommendation,
+    DraftRecommender,
+    DraftRoleRecommendation,
+    build_live_queries,
+    infer_my_side,
+)
 
 
 class DraftInferenceTest(unittest.TestCase):
@@ -261,6 +267,34 @@ class DraftInferenceTest(unittest.TestCase):
 
         queries = build_live_queries(session, static_data, model_vocab, champion_features)
         self.assertTrue(queries)
+
+    def test_recommend_lines_show_raw_soft_and_hard_lists(self) -> None:
+        static_data = StaticData(
+            version="test",
+            champions={1: "Annie", 2: "Olaf", 3: "Galio"},
+            summoner_spells={},
+            champion_keys={1: "Annie", 2: "Olaf", 3: "Galio"},
+        )
+        recommender = object.__new__(DraftRecommender)
+        recommender.recommend = lambda *args, **kwargs: [  # type: ignore[assignment]
+            DraftRoleRecommendation(
+                role="top",
+                raw=[
+                    DraftPickRecommendation(champion_id=1, score=0.6),
+                    DraftPickRecommendation(champion_id=2, score=0.3),
+                ],
+                soft=[DraftPickRecommendation(champion_id=1, score=0.7)],
+                hard=[DraftPickRecommendation(champion_id=2, score=0.8)],
+            )
+        ]
+
+        lines = recommender.recommend_lines({}, static_data)
+
+        self.assertIn("Recommendations", lines)
+        self.assertIn("  Top", lines)
+        self.assertIn("    Raw: Annie 60%, Olaf 30%", lines)
+        self.assertIn("    Soft: Annie 70%", lines)
+        self.assertIn("    Hard: Olaf 80%", lines)
 
 
 if __name__ == "__main__":

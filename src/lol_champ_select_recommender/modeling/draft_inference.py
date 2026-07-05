@@ -16,7 +16,7 @@ from .draft_data import (
     token_global_feature_ids,
 )
 from .draft_model import build_model_class, require_torch
-from .player_pruning import PlayerPruneIndex, load_player_prune_index, prune_candidates
+from .player_pruning import PlayerPruneIndex, hard_prune_candidates, load_player_prune_index, soft_prune_candidates
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,9 @@ class DraftPickRecommendation:
 @dataclass(frozen=True)
 class DraftRoleRecommendation:
     role: str
-    picks: list[DraftPickRecommendation]
+    raw: list[DraftPickRecommendation]
+    soft: list[DraftPickRecommendation] | None
+    hard: list[DraftPickRecommendation] | None
 
     @property
     def role_label(self) -> str:
@@ -135,35 +137,46 @@ class DraftRecommender:
         for row_index, query in enumerate(queries):
             row_logits = logits[row_index].clone()
             ranked_token_ids = torch.argsort(row_logits, descending=True).tolist()
-            ranked_champion_ids: list[int] = []
+            ranked_candidates: list[tuple[int, float]] = []
             for token_id in ranked_token_ids:
                 champion_id = token_id_to_champion_id.get(int(token_id))
                 if champion_id is None:
                     continue
                 if champion_id in query.blocked_champion_ids:
                     continue
-                ranked_champion_ids.append(champion_id)
+                ranked_candidates.append((champion_id, float(row_logits[int(token_id)].item())))
 
-            ranked_champion_ids = prune_candidates(
-                ranked_champion_ids,
-                role=query.role,
-                prune_index=self.player_prune_index,
-            )
-            if not ranked_champion_ids:
+            if not ranked_candidates:
                 continue
 
-            token_ids = [
-                int(self.model_vocab["champion_id_to_token_id"][str(champion_id)])
-                for champion_id in ranked_champion_ids
-            ]
-            probabilities = torch.softmax(row_logits[token_ids], dim=0)
-            k = min(max(1, top_k), len(ranked_champion_ids))
-            picks: list[DraftPickRecommendation] = []
-            for champion_id, probability in zip(ranked_champion_ids[:k], probabilities[:k].tolist()):
-                picks.append(DraftPickRecommendation(champion_id=champion_id, score=float(probability)))
+            raw = _score_ranked_candidates(ranked_candidates, top_k=top_k, torch_module=torch)
 
-            if picks:
-                recommendations.append(DraftRoleRecommendation(role=query.role, picks=picks))
+            if self.player_prune_index is None:
+                soft = None
+                hard = None
+            else:
+                soft_candidates = soft_prune_candidates(
+                    [champion_id for champion_id, _score in ranked_candidates],
+                    prune_index=self.player_prune_index,
+                )
+                hard_candidates = hard_prune_candidates(
+                    [champion_id for champion_id, _score in ranked_candidates],
+                    role=query.role,
+                    prune_index=self.player_prune_index,
+                )
+                soft = _score_ranked_candidates(
+                    [(champion_id, _candidate_score(ranked_candidates, champion_id)) for champion_id in soft_candidates],
+                    top_k=top_k,
+                    torch_module=torch,
+                )
+                hard = _score_ranked_candidates(
+                    [(champion_id, _candidate_score(ranked_candidates, champion_id)) for champion_id in hard_candidates],
+                    top_k=top_k,
+                    torch_module=torch,
+                )
+
+            if raw:
+                recommendations.append(DraftRoleRecommendation(role=query.role, raw=raw, soft=soft, hard=hard))
 
         return recommendations
 
@@ -206,11 +219,16 @@ class DraftRecommender:
 
         lines = ["Recommendations"]
         for recommendation in recommendations:
-            picks = ", ".join(
-                f"{static_data.champion_name(pick.champion_id)} {pick.score:.0%}"
-                for pick in recommendation.picks
-            )
-            lines.append(f"  {recommendation.role_label}: {picks}")
+            lines.append(f"  {recommendation.role_label}")
+            lines.append(f"    Raw: {_format_pick_list(recommendation.raw, static_data)}")
+            if recommendation.soft is None:
+                lines.append("    Soft: unavailable")
+            else:
+                lines.append(f"    Soft: {_format_pick_list(recommendation.soft, static_data)}")
+            if recommendation.hard is None:
+                lines.append("    Hard: unavailable")
+            else:
+                lines.append(f"    Hard: {_format_pick_list(recommendation.hard, static_data)}")
         return lines
 
     def prune_status(self) -> str:
@@ -421,6 +439,37 @@ def _token_id_to_champion_id(model_vocab: dict[str, Any]) -> dict[int, int]:
         if str(champion_token).isdigit():
             result[int(token_id)] = int(champion_token)
     return result
+
+
+def _score_ranked_candidates(
+    ranked_candidates: list[tuple[int, float]],
+    *,
+    top_k: int,
+    torch_module,
+) -> list[DraftPickRecommendation]:
+    if not ranked_candidates:
+        return []
+
+    limited = ranked_candidates[: max(1, top_k)]
+    logits = torch_module.tensor([score for _champion_id, score in limited], dtype=torch_module.float32)
+    probabilities = torch_module.softmax(logits, dim=0).tolist()
+    return [
+        DraftPickRecommendation(champion_id=champion_id, score=float(probability))
+        for (champion_id, _score), probability in zip(limited, probabilities)
+    ]
+
+
+def _candidate_score(ranked_candidates: list[tuple[int, float]], champion_id: int) -> float:
+    for candidate_champion_id, candidate_score in ranked_candidates:
+        if candidate_champion_id == champion_id:
+            return candidate_score
+    return float("-inf")
+
+
+def _format_pick_list(picks: list[DraftPickRecommendation], static_data: StaticData) -> str:
+    if not picks:
+        return "-"
+    return ", ".join(f"{static_data.champion_name(pick.champion_id)} {pick.score:.0%}" for pick in picks)
 
 
 def _as_int(value: Any) -> int | None:
