@@ -131,6 +131,7 @@ def main() -> int:
         use_role_heads=True,
         use_hierarchy=True,
     ).to(device)
+    print(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = torch.nn.CrossEntropyLoss(
         weight=champion_loss_weights.to(device) if champion_loss_weights is not None else None,

@@ -106,11 +106,12 @@ class DraftRecommender:
             use_role_heads=bool(model_config.get("use_role_heads", False)),
             use_hierarchy=bool(model_config.get("use_hierarchy", False)),
         )
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
         resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(torch.device(resolved_device))
         model.eval()
+        print(model)
 
         return cls(model, model_vocab, champion_features, torch, player_prune_index)
 
