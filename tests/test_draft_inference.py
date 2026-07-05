@@ -308,7 +308,7 @@ class DraftInferenceTest(unittest.TestCase):
             "    Champion Extrapolated: also keeps <20 games when losses < 9.6; missing stats count as 0 games",
             lines,
         )
-        self.assertIn("    Lane Hard: 20+ games and 53%+ WR on that lane", lines)
+        self.assertIn("    Lane Hard: 20+ games and 52%+ WR on that lane", lines)
         self.assertIn("    Lane Soft: <20 games and losses < 9.6 on that lane; missing lanes count as 0 games", lines)
         self.assertIn("  Top", lines)
         self.assertIn("    Raw: Annie 60%, Olaf 30%", lines)
