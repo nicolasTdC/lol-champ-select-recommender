@@ -16,6 +16,7 @@ def render_session(
     role_priors: RolePriors | None = None,
     model_status: str | None = None,
     recommendation_lines: list[str] | None = None,
+    debug_lines: list[str] | None = None,
 ) -> str:
     width = shutil.get_terminal_size((120, 30)).columns
     lines: list[str] = []
@@ -79,6 +80,9 @@ def render_session(
     bans = session.get("bans", {})
     lines.append(f"Ally bans:  {_name_list(bans.get('myTeamBans', []), static_data)}")
     lines.append(f"Enemy bans: {_name_list(bans.get('theirTeamBans', []), static_data)}")
+    if debug_lines:
+        lines.append("")
+        lines.extend(debug_lines)
     if recommendation_lines:
         lines.append("")
         lines.extend(recommendation_lines)

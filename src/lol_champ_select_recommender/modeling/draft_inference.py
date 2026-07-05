@@ -42,6 +42,13 @@ class LiveDraftQuery:
     blocked_champion_ids: set[int]
 
 
+@dataclass(frozen=True)
+class DecodedToken:
+    index: int
+    label: str
+    values: list[tuple[str, str]]
+
+
 class DraftRecommender:
     def __init__(
         self,
@@ -147,6 +154,31 @@ class DraftRecommender:
                 recommendations.append(DraftRoleRecommendation(role=query.role, picks=picks))
 
         return recommendations
+
+    def debug_lines(
+        self,
+        session: dict[str, Any],
+        static_data: StaticData,
+        *,
+        role_priors: RolePriors | None = None,
+    ) -> list[str]:
+        queries = build_live_queries(
+            session,
+            static_data,
+            self.model_vocab,
+            self.champion_features,
+            role_priors=role_priors,
+        )
+        if not queries:
+            return ["Inference debug: no live draft query available"]
+
+        lines = ["Inference debug"]
+        for query in queries:
+            lines.append(f"  role={ROLE_NAMES.get(query.role, query.role)} query_index={query.query_index}")
+            for token in decode_live_tokens(query.feature_ids, self.model_vocab):
+                feature_text = ", ".join(f"{name}={value}" for name, value in token.values)
+                lines.append(f"    [{token.index:02d}] {token.label}: {feature_text}")
+        return lines
 
     def recommend_lines(
         self,
@@ -281,6 +313,26 @@ def _live_feature_ids_for_role(
         token_global_feature_ids(token, {}, model_vocab, champion_features)
         for token in tokens
     ]
+
+
+def decode_live_tokens(feature_ids: list[list[int]], model_vocab: dict[str, Any]) -> list[DecodedToken]:
+    inverse_vocabs = {
+        feature_name: {value: token for token, value in vocab.items()}
+        for feature_name, vocab in model_vocab["feature_vocabs"].items()
+    }
+    decoded: list[DecodedToken] = []
+    for index, token_features in enumerate(feature_ids):
+        values: list[tuple[str, str]] = []
+        label = "token"
+        for feature_name, global_id in zip(model_vocab["token_features"], token_features):
+            offset = int(model_vocab["feature_offsets"][feature_name])
+            local_id = int(global_id) - offset
+            token = inverse_vocabs[feature_name].get(local_id, "?")
+            values.append((feature_name, str(token)))
+            if feature_name == "champion":
+                label = str(token)
+        decoded.append(DecodedToken(index=index, label=label, values=values))
+    return decoded
 
 
 def infer_my_side(session: dict[str, Any]) -> str | None:

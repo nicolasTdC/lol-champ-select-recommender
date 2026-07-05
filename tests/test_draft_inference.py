@@ -155,6 +155,113 @@ class DraftInferenceTest(unittest.TestCase):
         self.assertIn(3, queries[0].blocked_champion_ids)
         self.assertIn(99, queries[0].blocked_champion_ids)
 
+    def test_debug_lines_include_token_dump(self) -> None:
+        static_data = StaticData(
+            version="test",
+            champions={1: "Annie", 2: "Olaf", 3: "Galio", 99: "Lux"},
+            summoner_spells={},
+            champion_keys={1: "Annie", 2: "Olaf", 3: "Galio", 99: "Lux"},
+        )
+        draft_rows = [
+            {
+                "patch": "16.13",
+                "queue_id": 420,
+                "winning_side": "blue",
+                "blue": {"top": 1, "jungle": None, "middle": None, "bottom": None, "utility": None},
+                "red": {"top": 2, "jungle": None, "middle": None, "bottom": None, "utility": None},
+                "blue_bans": [3, -1, -1, -1, -1],
+                "red_bans": [99, -1, -1, -1, -1],
+            }
+        ]
+        feature_rows = [
+            {
+                "champion_id": "1",
+                "champion_key": "Annie",
+                "champion_name": "Annie",
+                "primary_tag": "Mage",
+                "secondary_tag": "<NONE>",
+                "partype": "Mana",
+                "range_type": "ranged",
+                "info_attack": "2",
+                "info_defense": "3",
+                "info_magic": "10",
+                "info_difficulty": "7",
+                "stat_attackrange": "625",
+                "stat_hp": "1200",
+            },
+            {
+                "champion_id": "2",
+                "champion_key": "Olaf",
+                "champion_name": "Olaf",
+                "primary_tag": "Fighter",
+                "secondary_tag": "<NONE>",
+                "partype": "Mana",
+                "range_type": "melee",
+                "info_attack": "8",
+                "info_defense": "5",
+                "info_magic": "2",
+                "info_difficulty": "4",
+                "stat_attackrange": "175",
+                "stat_hp": "1200",
+            },
+            {
+                "champion_id": "3",
+                "champion_key": "Galio",
+                "champion_name": "Galio",
+                "primary_tag": "Tank",
+                "secondary_tag": "Mage",
+                "partype": "Mana",
+                "range_type": "melee",
+                "info_attack": "3",
+                "info_defense": "8",
+                "info_magic": "7",
+                "info_difficulty": "5",
+                "stat_attackrange": "150",
+                "stat_hp": "1200",
+            },
+            {
+                "champion_id": "99",
+                "champion_key": "Lux",
+                "champion_name": "Lux",
+                "primary_tag": "Mage",
+                "secondary_tag": "Support",
+                "partype": "Mana",
+                "range_type": "ranged",
+                "info_attack": "2",
+                "info_defense": "4",
+                "info_magic": "8",
+                "info_difficulty": "5",
+                "stat_attackrange": "550",
+                "stat_hp": "1200",
+            },
+        ]
+        model_vocab = build_model_vocab(draft_rows, feature_rows, numeric_bins=4)
+        champion_features = champion_features_by_id(feature_rows)
+        session = {
+            "localPlayerCellId": 1,
+            "myTeam": [
+                {"cellId": 1, "championId": 1, "assignedPosition": "top"},
+                {"cellId": 2, "championId": 0},
+                {"cellId": 3, "championId": 0},
+                {"cellId": 4, "championId": 0},
+                {"cellId": 5, "championId": 0},
+            ],
+            "theirTeam": [
+                {"cellId": 6, "championId": 2, "assignedPosition": "jungle"},
+                {"cellId": 7, "championId": 0},
+                {"cellId": 8, "championId": 0},
+                {"cellId": 9, "championId": 0},
+                {"cellId": 10, "championId": 0},
+            ],
+            "bans": {
+                "myTeamBans": [3],
+                "theirTeamBans": [99],
+            },
+        }
+
+        queries = build_live_queries(session, static_data, model_vocab, champion_features)
+        self.assertTrue(queries)
+
 
 if __name__ == "__main__":
     unittest.main()

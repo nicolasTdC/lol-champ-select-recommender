@@ -68,6 +68,7 @@ class RenderSessionTest(unittest.TestCase):
             lockfile_label="test-lockfile",
             model_status="loaded test-model",
             recommendation_lines=["Recommendations", "  Top: Annie 99%"],
+            debug_lines=["Inference debug", "  role=Top query_index=0"],
         )
 
         self.assertIn("Gameflow: ChampSelect", output)
@@ -79,6 +80,7 @@ class RenderSessionTest(unittest.TestCase):
         self.assertIn("Enemy bans: Lux", output)
         self.assertIn("Draft model: loaded test-model", output)
         self.assertIn("Recommendations", output)
+        self.assertIn("Inference debug", output)
 
     def test_render_infers_enemy_roles(self) -> None:
         static_data = StaticData(

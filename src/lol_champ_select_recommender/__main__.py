@@ -41,6 +41,7 @@ def main() -> int:
             phase = connection.gameflow_phase()
             session = connection.champ_select_session() if phase == "ChampSelect" else None
             recommendation_lines = None
+            debug_lines = None
             if session and recommender:
                 recommendation_lines = recommender.recommend_lines(
                     session,
@@ -48,6 +49,12 @@ def main() -> int:
                     role_priors=role_priors,
                     top_k=args.recommendation_count,
                 )
+                if args.debug_inference:
+                    debug_lines = recommender.debug_lines(
+                        session,
+                        static_data,
+                        role_priors=role_priors,
+                    )
             output = render_session(
                 phase=phase,
                 session=session,
@@ -56,6 +63,7 @@ def main() -> int:
                 role_priors=role_priors,
                 model_status=model_status,
                 recommendation_lines=recommendation_lines,
+                debug_lines=debug_lines,
             )
         except LcuError as exc:
             output = f"League Champ Select Watcher\nError: {exc}"
@@ -137,6 +145,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3,
         help="How many champion recommendations to show per open role. Default: 3",
+    )
+    parser.add_argument(
+        "--debug-inference",
+        action="store_true",
+        help="Print the live inference token sequence and decoded feature values.",
     )
     return parser.parse_args()
 
