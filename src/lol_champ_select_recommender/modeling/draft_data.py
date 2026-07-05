@@ -24,9 +24,6 @@ TOKEN_FEATURES = [
     "side",
     "token_type",
     "map_side",
-    "patch",
-    "rank_bucket",
-    "queue_id",
     "primary_tag",
     "secondary_tag",
     "partype",
@@ -93,9 +90,6 @@ def build_model_vocab(
         "side": vocab_from_tokens([NONE_TOKEN, "ally", "enemy"]),
         "token_type": vocab_from_tokens(["pick", "ban"]),
         "map_side": vocab_from_tokens([NONE_TOKEN, "blue", "red"]),
-        "patch": vocab_from_tokens(row.get("patch") for row in draft_rows),
-        "rank_bucket": vocab_from_tokens(row.get("rank_bucket") for row in draft_rows),
-        "queue_id": vocab_from_tokens(str(row.get("queue_id", NONE_TOKEN)) for row in draft_rows),
     }
 
     for feature in CHAMPION_CATEGORICAL_FEATURES:
@@ -237,9 +231,6 @@ def token_global_feature_ids(
         "side": token["side"],
         "token_type": token["token_type"],
         "map_side": token["map_side"],
-        "patch": str(row.get("patch") or NONE_TOKEN),
-        "rank_bucket": str(row.get("rank_bucket") or NONE_TOKEN),
-        "queue_id": str(row.get("queue_id") or NONE_TOKEN),
         "primary_tag": category_value(static_features.get("primary_tag")),
         "secondary_tag": category_value(static_features.get("secondary_tag")),
         "partype": category_value(static_features.get("partype")),
