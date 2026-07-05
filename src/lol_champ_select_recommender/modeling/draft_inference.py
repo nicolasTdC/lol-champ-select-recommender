@@ -16,7 +16,14 @@ from .draft_data import (
     token_global_feature_ids,
 )
 from .draft_model import build_model_class, require_torch
-from .player_pruning import PlayerPruneIndex, hard_prune_candidates, load_player_prune_index, soft_prune_candidates
+from .player_pruning import (
+    PlayerPruneIndex,
+    extrapolated_hard_prune_candidates,
+    extrapolated_soft_prune_candidates,
+    hard_prune_candidates,
+    load_player_prune_index,
+    soft_prune_candidates,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,8 @@ class DraftRoleRecommendation:
     raw: list[DraftPickRecommendation]
     soft: list[DraftPickRecommendation] | None
     hard: list[DraftPickRecommendation] | None
+    extrapolated_soft: list[DraftPickRecommendation] | None
+    extrapolated_hard: list[DraftPickRecommendation] | None
 
     @property
     def role_label(self) -> str:
@@ -154,6 +163,8 @@ class DraftRecommender:
             if self.player_prune_index is None:
                 soft = None
                 hard = None
+                extrapolated_soft = None
+                extrapolated_hard = None
             else:
                 soft_candidates = soft_prune_candidates(
                     [champion_id for champion_id, _score in ranked_candidates],
@@ -174,9 +185,43 @@ class DraftRecommender:
                     top_k=top_k,
                     torch_module=torch,
                 )
+                extrapolated_soft_candidates = extrapolated_soft_prune_candidates(
+                    [champion_id for champion_id, _score in ranked_candidates],
+                    prune_index=self.player_prune_index,
+                )
+                extrapolated_hard_candidates = extrapolated_hard_prune_candidates(
+                    [champion_id for champion_id, _score in ranked_candidates],
+                    role=query.role,
+                    prune_index=self.player_prune_index,
+                )
+                extrapolated_soft = _score_ranked_candidates(
+                    [
+                        (champion_id, _candidate_score(ranked_candidates, champion_id))
+                        for champion_id in extrapolated_soft_candidates
+                    ],
+                    top_k=top_k,
+                    torch_module=torch,
+                )
+                extrapolated_hard = _score_ranked_candidates(
+                    [
+                        (champion_id, _candidate_score(ranked_candidates, champion_id))
+                        for champion_id in extrapolated_hard_candidates
+                    ],
+                    top_k=top_k,
+                    torch_module=torch,
+                )
 
             if raw:
-                recommendations.append(DraftRoleRecommendation(role=query.role, raw=raw, soft=soft, hard=hard))
+                recommendations.append(
+                    DraftRoleRecommendation(
+                        role=query.role,
+                        raw=raw,
+                        soft=soft,
+                        hard=hard,
+                        extrapolated_soft=extrapolated_soft,
+                        extrapolated_hard=extrapolated_hard,
+                    )
+                )
 
         return recommendations
 
@@ -229,6 +274,18 @@ class DraftRecommender:
                 lines.append("    Hard: unavailable")
             else:
                 lines.append(f"    Hard: {_format_pick_list(recommendation.hard, static_data)}")
+            if recommendation.extrapolated_soft is None:
+                lines.append("    Extrapolated Soft: unavailable")
+            else:
+                lines.append(
+                    f"    Extrapolated Soft: {_format_pick_list(recommendation.extrapolated_soft, static_data)}"
+                )
+            if recommendation.extrapolated_hard is None:
+                lines.append("    Extrapolated Hard: unavailable")
+            else:
+                lines.append(
+                    f"    Extrapolated Hard: {_format_pick_list(recommendation.extrapolated_hard, static_data)}"
+                )
         return lines
 
     def prune_status(self) -> str:

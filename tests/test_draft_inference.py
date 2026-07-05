@@ -285,6 +285,8 @@ class DraftInferenceTest(unittest.TestCase):
                 ],
                 soft=[DraftPickRecommendation(champion_id=1, score=0.7)],
                 hard=[DraftPickRecommendation(champion_id=2, score=0.8)],
+                extrapolated_soft=[DraftPickRecommendation(champion_id=1, score=0.9)],
+                extrapolated_hard=[DraftPickRecommendation(champion_id=2, score=1.0)],
             )
         ]
 
@@ -295,6 +297,8 @@ class DraftInferenceTest(unittest.TestCase):
         self.assertIn("    Raw: Annie 60%, Olaf 30%", lines)
         self.assertIn("    Soft: Annie 70%", lines)
         self.assertIn("    Hard: Olaf 80%", lines)
+        self.assertIn("    Extrapolated Soft: Annie 90%", lines)
+        self.assertIn("    Extrapolated Hard: Olaf 100%", lines)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lol_champ_select_recommender.modeling.player_pruning import load_player_prune_index, prune_candidates
+from lol_champ_select_recommender.modeling.player_pruning import (
+    load_player_prune_index,
+    prune_candidates,
+    extrapolated_hard_prune_candidates,
+    extrapolated_soft_prune_candidates,
+)
 
 
 class PlayerPruningTest(unittest.TestCase):
@@ -34,16 +39,22 @@ class PlayerPruningTest(unittest.TestCase):
         assert index is not None
         self.assertTrue(index.passes_soft(1))
         self.assertTrue(index.passes_hard(1, "top"))
-        self.assertTrue(index.passes_hard(1, "jungle"))
+        self.assertFalse(index.passes_hard(1, "jungle"))
         self.assertFalse(index.passes_soft(2))
         self.assertFalse(index.passes_hard(2, "top"))
         self.assertFalse(index.passes_soft(3))
         self.assertFalse(index.passes_hard(3, "top"))
-        self.assertTrue(index.passes_soft(4))
-        self.assertTrue(index.passes_hard(4, "top"))
+        self.assertFalse(index.passes_soft(4))
+        self.assertFalse(index.passes_hard(4, "top"))
         self.assertFalse(index.passes_soft(5))
         self.assertFalse(index.passes_hard(5, "top"))
+        self.assertTrue(index.passes_soft_extrapolated(4))
+        self.assertTrue(index.passes_hard_extrapolated(4, "top"))
+        self.assertFalse(index.passes_soft_extrapolated(5))
+        self.assertFalse(index.passes_hard_extrapolated(5, "top"))
         self.assertEqual(prune_candidates([1, 2, 3], role="top", prune_index=index), [1])
+        self.assertEqual(extrapolated_soft_prune_candidates([1, 2, 3, 4, 5], prune_index=index), [1, 4])
+        self.assertEqual(extrapolated_hard_prune_candidates([1, 2, 3, 4, 5], role="top", prune_index=index), [1, 4])
 
 
 if __name__ == "__main__":

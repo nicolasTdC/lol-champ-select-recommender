@@ -44,10 +44,16 @@ class PlayerPruneIndex:
         return self.by_role_by_champion.get(role, {}).get(champion_id)
 
     def passes_soft(self, champion_id: int | None) -> bool:
-        return passes_threshold(self.overall_stats(champion_id))
+        return passes_strict_threshold(self.overall_stats(champion_id))
 
     def passes_hard(self, champion_id: int | None, role: str) -> bool:
-        return passes_threshold(self.role_stats(champion_id, role))
+        return passes_strict_threshold(self.role_stats(champion_id, role))
+
+    def passes_soft_extrapolated(self, champion_id: int | None) -> bool:
+        return passes_extrapolated_threshold(self.overall_stats(champion_id))
+
+    def passes_hard_extrapolated(self, champion_id: int | None, role: str) -> bool:
+        return passes_extrapolated_threshold(self.role_stats(champion_id, role))
 
     def prune_reasons(self, champion_id: int | None, role: str) -> tuple[bool, bool]:
         return self.passes_soft(champion_id), self.passes_hard(champion_id, role)
@@ -135,7 +141,44 @@ def hard_prune_candidates(
     return kept
 
 
-def passes_threshold(stats: PruneStats | None) -> bool:
+def extrapolated_soft_prune_candidates(
+    champion_ids: list[int],
+    *,
+    prune_index: PlayerPruneIndex | None,
+) -> list[int]:
+    if prune_index is None:
+        return champion_ids
+
+    kept: list[int] = []
+    for champion_id in champion_ids:
+        if prune_index.passes_soft_extrapolated(champion_id):
+            kept.append(champion_id)
+    return kept
+
+
+def extrapolated_hard_prune_candidates(
+    champion_ids: list[int],
+    *,
+    role: str,
+    prune_index: PlayerPruneIndex | None,
+) -> list[int]:
+    if prune_index is None:
+        return champion_ids
+
+    kept: list[int] = []
+    for champion_id in champion_ids:
+        if prune_index.passes_soft_extrapolated(champion_id) and prune_index.passes_hard_extrapolated(champion_id, role):
+            kept.append(champion_id)
+    return kept
+
+
+def passes_strict_threshold(stats: PruneStats | None) -> bool:
+    if stats is None:
+        return False
+    return stats.games >= MIN_GAMES and stats.win_rate >= MIN_WIN_RATE
+
+
+def passes_extrapolated_threshold(stats: PruneStats | None) -> bool:
     if stats is None:
         return False
     if stats.games >= MIN_GAMES:
