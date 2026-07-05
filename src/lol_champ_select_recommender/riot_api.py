@@ -211,18 +211,24 @@ class RiotApiClient:
             },
         )
 
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            if exc.code == 429 and retry_429_once:
+        max_429_retries = 5 if retry_429_once else 0
+        attempt = 0
+        while True:
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    body = response.read().decode("utf-8")
+                break
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")
+                if exc.code != 429 or attempt >= max_429_retries:
+                    raise RiotApiError(_format_http_error(exc.code, url, body)) from exc
+
                 retry_after = _retry_after_seconds(exc.headers.get("Retry-After"))
-                time.sleep(retry_after)
-                return self._request_host_json(host, path, params, retry_429_once=False)
-            raise RiotApiError(_format_http_error(exc.code, url, body)) from exc
-        except OSError as exc:
-            raise RiotApiError(f"Could not reach Riot API at {url}: {exc}") from exc
+                sleep_seconds = max(retry_after, min(30, 2**attempt))
+                time.sleep(sleep_seconds)
+                attempt += 1
+            except OSError as exc:
+                raise RiotApiError(f"Could not reach Riot API at {url}: {exc}") from exc
 
         if not body:
             return None

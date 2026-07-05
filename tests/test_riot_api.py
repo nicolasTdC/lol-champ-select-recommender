@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import io
+import urllib.error
+import urllib.request
 import unittest
 from argparse import Namespace
+from unittest.mock import patch
 
 from lol_champ_select_recommender.collect_ranked_matches import collect_ladder_entries, select_seed_players
-from lol_champ_select_recommender.riot_api import RiotApiError, parse_riot_id, region_for_platform
+from lol_champ_select_recommender.riot_api import RiotApiClient, RiotApiError, parse_riot_id, region_for_platform
 
 
 class RiotApiTest(unittest.TestCase):
@@ -65,6 +69,26 @@ class RiotApiTest(unittest.TestCase):
         self.assertEqual(client.standard_calls, [("br1", "RANKED_SOLO_5x5", "DIAMOND", "I", 1)])
         self.assertEqual(client.apex_calls, [])
 
+    def test_request_host_json_retries_429_before_succeeding(self) -> None:
+        client = RiotApiClient(api_key="test-key", timeout=0.1)
+        response = FakeHttpResponse(b'{"ok": true}')
+        error = urllib.error.HTTPError(
+            "https://example.com",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "0"},
+            io.BytesIO(b'{"status":{"status_code":429}}'),
+        )
+
+        with patch.object(urllib.request, "urlopen", side_effect=[error, response]) as mocked_urlopen, patch(
+            "lol_champ_select_recommender.riot_api.time.sleep"
+        ) as mocked_sleep:
+            data = client._request_host_json("example.com", "/test")
+
+        self.assertEqual(data, {"ok": True})
+        self.assertEqual(mocked_urlopen.call_count, 2)
+        mocked_sleep.assert_called()
+
 
 class FakeRiotClient:
     def __init__(self) -> None:
@@ -78,6 +102,20 @@ class FakeRiotClient:
     def league_entries(self, platform: str, *, queue: str, tier: str, division: str, page: int):
         self.standard_calls.append((platform, queue, tier, division, page))
         return [{"puuid": "diamond-puuid"}]
+
+
+class FakeHttpResponse:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self) -> bytes:
+        return self.payload
 
 
 if __name__ == "__main__":
