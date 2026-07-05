@@ -18,20 +18,10 @@ NOT_SELECTED_TOKEN = "<NOT_SELECTED>"
 UNK_TOKEN = "<UNK>"
 NONE_TOKEN = "<NONE>"
 
-PICK_SLOTS = [
-    *(f"ally_{role}" for role in POSITION_ORDER),
-    *(f"enemy_{role}" for role in POSITION_ORDER),
-]
-BAN_SLOTS = [
-    *(f"ally_ban_{index}" for index in range(1, 6)),
-    *(f"enemy_ban_{index}" for index in range(1, 6)),
-]
-ALL_SLOTS = [*PICK_SLOTS, *BAN_SLOTS]
 TOKEN_FEATURES = [
     "champion",
     "role",
     "side",
-    "slot",
     "token_type",
     "map_side",
     "patch",
@@ -101,7 +91,6 @@ def build_model_vocab(
         "champion": champion_token_to_id,
         "role": vocab_from_tokens([NONE_TOKEN, "ban", *POSITION_ORDER]),
         "side": vocab_from_tokens([NONE_TOKEN, "ally", "enemy"]),
-        "slot": vocab_from_tokens([*ALL_SLOTS]),
         "token_type": vocab_from_tokens(["pick", "ban"]),
         "map_side": vocab_from_tokens([NONE_TOKEN, "blue", "red"]),
         "patch": vocab_from_tokens(row.get("patch") for row in draft_rows),
@@ -127,9 +116,7 @@ def build_model_vocab(
         "schema_version": 1,
         "special_champion_tokens": SPECIAL_CHAMPION_TOKENS,
         "token_features": [*TOKEN_FEATURES, *(f"bin_{name}" for name in numeric_feature_names)],
-        "context_token_count": len(ALL_SLOTS),
-        "pick_slots": PICK_SLOTS,
-        "ban_slots": BAN_SLOTS,
+        "context_token_count": len(POSITION_ORDER) * 2 + 10,
         "champion_token_to_id": champion_token_to_id,
         "champion_id_to_token_id": champion_id_to_token_id,
         "feature_vocabs": feature_vocabs,
@@ -188,7 +175,6 @@ def build_training_example(
                     "champion_id": champion_id,
                     "role": role,
                     "side": side_label,
-                    "slot": f"{side_label}_{role}",
                     "token_type": "pick",
                     "map_side": map_side,
                 }
@@ -211,7 +197,6 @@ def build_training_example(
                     "champion_id": champion_id,
                     "role": "ban",
                     "side": side_label,
-                    "slot": f"{side_label}_ban_{index + 1}",
                     "token_type": "ban",
                     "map_side": map_side,
                 }
@@ -250,7 +235,6 @@ def token_global_feature_ids(
         "champion": champion_token_value(champion_token, champion_id, model_vocab),
         "role": token["role"],
         "side": token["side"],
-        "slot": token["slot"],
         "token_type": token["token_type"],
         "map_side": token["map_side"],
         "patch": str(row.get("patch") or NONE_TOKEN),
