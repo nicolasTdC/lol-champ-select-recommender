@@ -55,10 +55,14 @@ def main() -> int:
                     top_k=args.recommendation_count,
                 )
                 if args.debug_inference:
-                    debug_lines = recommender.debug_lines(
-                        session,
-                        static_data,
-                        role_priors=role_priors,
+                    write_debug_inference_log(
+                        args.debug_inference_log,
+                        phase=phase,
+                        lines=recommender.debug_lines(
+                            session,
+                            static_data,
+                            role_priors=role_priors,
+                        ),
                     )
             output = render_session(
                 phase=phase,
@@ -165,7 +169,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--debug-inference",
         action="store_true",
-        help="Print the live inference token sequence and decoded feature values.",
+        help="Write the live inference token sequence and decoded feature values to --debug-inference-log.",
+    )
+    parser.add_argument(
+        "--debug-inference-log",
+        default="data/logs/inference_debug.log",
+        help="Path for --debug-inference output. Default: data/logs/inference_debug.log",
     )
     return parser.parse_args()
 
@@ -173,6 +182,17 @@ def parse_args() -> argparse.Namespace:
 def _clear_screen() -> None:
     if sys.stdout.isatty():
         os.system("cls" if os.name == "nt" else "clear")
+
+
+def write_debug_inference_log(path: str | Path, *, phase: str, lines: list[str]) -> None:
+    log_path = Path(path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with log_path.open("a", encoding="utf-8") as file:
+        file.write(f"[{timestamp}] phase={phase}\n")
+        for line in lines:
+            file.write(f"{line}\n")
+        file.write("\n")
 
 
 def load_recommender(args: argparse.Namespace) -> tuple[DraftRecommender | None, str]:
