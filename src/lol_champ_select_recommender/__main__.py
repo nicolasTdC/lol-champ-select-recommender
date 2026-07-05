@@ -30,6 +30,7 @@ def main() -> int:
         min_total_games=args.role_priors_min_games,
     )
     recommender, model_status = load_recommender(args)
+    model_lines = str(recommender.model).splitlines() if recommender else None
     lockfile_label = (
         f"{lockfile} -> {connection.base_url} ({connection.transport})"
         if lockfile
@@ -62,6 +63,7 @@ def main() -> int:
                 lockfile_label=lockfile_label,
                 role_priors=role_priors,
                 model_status=model_status,
+                model_lines=model_lines,
                 recommendation_lines=recommendation_lines,
                 debug_lines=debug_lines,
             )

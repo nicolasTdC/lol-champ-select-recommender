@@ -15,6 +15,7 @@ def render_session(
     lockfile_label: str,
     role_priors: RolePriors | None = None,
     model_status: str | None = None,
+    model_lines: list[str] | None = None,
     recommendation_lines: list[str] | None = None,
     debug_lines: list[str] | None = None,
 ) -> str:
@@ -40,6 +41,9 @@ def render_session(
         lines.append(f"Draft model: {model_status}")
     else:
         lines.append("Draft model: unavailable")
+    if model_lines:
+        lines.append("Draft model details:")
+        lines.extend(f"  {line}" for line in model_lines)
     lines.append("")
 
     if phase != "ChampSelect" or not session:

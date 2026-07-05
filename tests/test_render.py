@@ -67,6 +67,7 @@ class RenderSessionTest(unittest.TestCase):
             static_data=static_data,
             lockfile_label="test-lockfile",
             model_status="loaded test-model",
+            model_lines=["Linear(in_features=8, out_features=6, bias=True)"],
             recommendation_lines=["Recommendations", "  Top: Annie 99%"],
             debug_lines=["Inference debug", "  role=Top query_index=0"],
         )
@@ -79,6 +80,8 @@ class RenderSessionTest(unittest.TestCase):
         self.assertIn("Ally bans:  Galio", output)
         self.assertIn("Enemy bans: Lux", output)
         self.assertIn("Draft model: loaded test-model", output)
+        self.assertIn("Draft model details:", output)
+        self.assertIn("Linear(in_features=8, out_features=6, bias=True)", output)
         self.assertIn("Recommendations", output)
         self.assertIn("Inference debug", output)
 
