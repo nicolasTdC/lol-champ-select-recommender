@@ -298,3 +298,53 @@ Conclusion:
 - `d256` is dominated by `d192` and `d384`, so it is not a good main pretrain target.
 - For the main pretrain, prefer `d192_l4_ff768` as the balanced config if runtime/VRAM matter. Use `d384_l4_ff1536` only if optimizing specifically for top-10 candidate recall.
 - Keep `lr=3e-4`, `batch_size=16`, `label_smoothing=0.03`, `champion_loss_weight_power=0.35`, and `coarse_loss_weight=0.3` for the next main pretrain unless a dedicated sweep contradicts them on the full corpus.
+
+## 2026-07-05 - Full pretrain on 21k draft rows
+
+Dataset:
+
+```text
+data/processed/draft_dataset.jsonl rows: 21467
+trainable rows: 21465
+dropped incomplete winning comps: 2
+```
+
+Config:
+
+```text
+--use-hierarchy --d-model 192 --num-heads 1 --num-layers 4 --dim-feedforward 768
+--epochs 50 --batch-size 16 --lr 3e-4 --weight-decay 0.01
+--label-smoothing 0.03 --coarse-loss-weight 0.3 --champion-loss-weight-power 0.35
+--train-examples-per-row 4 --numeric-bins 10
+--eval-every-train-batches 1000 --mid-epoch-eval-fraction 0.25
+```
+
+Run log:
+
+```text
+data/experiments/full_pretrain_2026-07-05_130652.log
+```
+
+Best observed validation points:
+
+| Metric | Source | Epoch | Batch | Value |
+| --- | --- | ---: | ---: | ---: |
+| Loss | mid-eval | 27 | 3000/4562 | 4.7275 |
+| Top-10 | mid-eval | 21 | 4000/4562 | 0.4975 |
+| Top-5 | mid-eval | 22 | 4000/4562 | 0.3297 |
+| Acc | mid-eval | 28 | 1000/4562 | 0.1189 |
+| MRR | mid-eval | 22 | 1000/4562 | 0.2308 |
+| Macro F1 | mid-eval | 28 | 1000/4562 | 0.0705 |
+
+Stopped manually at epoch 45 after validation stopped improving. The LR had already reached `1e-6`, and the final epoch was worse than the best checkpoint:
+
+```text
+last epoch 045: val_loss=4.8221 val_acc=0.0876 val_top5=0.2851 val_top10=0.4540 val_mrr=0.2034
+best.pt: epoch=27 source=mid_epoch batch=3000/4562 val_loss=4.7275
+```
+
+Conclusion:
+
+- The run plateaued and then degraded after roughly epochs 21-28.
+- `data/models/draft_transformer/best.pt` should be used, not `last.pt`.
+- Future full pretrains should use earlier stopping around 8-10 validations without loss improvement, or reduce the max epoch budget to around 30 for this corpus/config.
