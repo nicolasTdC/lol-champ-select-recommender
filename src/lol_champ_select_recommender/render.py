@@ -14,6 +14,8 @@ def render_session(
     static_data: StaticData,
     lockfile_label: str,
     role_priors: RolePriors | None = None,
+    model_status: str | None = None,
+    recommendation_lines: list[str] | None = None,
 ) -> str:
     width = shutil.get_terminal_size((120, 30)).columns
     lines: list[str] = []
@@ -33,6 +35,10 @@ def render_session(
         )
     else:
         lines.append("Role priors: unavailable, using fallback map")
+    if model_status:
+        lines.append(f"Draft model: {model_status}")
+    else:
+        lines.append("Draft model: unavailable")
     lines.append("")
 
     if phase != "ChampSelect" or not session:
@@ -73,6 +79,9 @@ def render_session(
     bans = session.get("bans", {})
     lines.append(f"Ally bans:  {_name_list(bans.get('myTeamBans', []), static_data)}")
     lines.append(f"Enemy bans: {_name_list(bans.get('theirTeamBans', []), static_data)}")
+    if recommendation_lines:
+        lines.append("")
+        lines.extend(recommendation_lines)
 
     return "\n".join(lines)
 

@@ -243,7 +243,11 @@ def token_global_feature_ids(
         local_values[f"bin_{feature_name}"] = numeric_bin_token(value, edges)
 
     return [
-        global_feature_id(feature_name, local_values[feature_name], model_vocab)
+        global_feature_id(
+            feature_name,
+            local_values.get(feature_name, UNK_TOKEN if feature_name.startswith("bin_") else NONE_TOKEN),
+            model_vocab,
+        )
         for feature_name in model_vocab["token_features"]
     ]
 

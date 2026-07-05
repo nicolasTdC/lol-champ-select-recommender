@@ -4,9 +4,11 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 from .ddragon import load_static_data
 from .lcu import LcuError, connect
+from .modeling.draft_inference import DraftRecommender
 from .render import render_session
 from .roles import load_role_priors
 
@@ -27,6 +29,7 @@ def main() -> int:
         patch=args.role_priors_patch,
         min_total_games=args.role_priors_min_games,
     )
+    recommender, model_status = load_recommender(args)
     lockfile_label = (
         f"{lockfile} -> {connection.base_url} ({connection.transport})"
         if lockfile
@@ -37,12 +40,22 @@ def main() -> int:
         try:
             phase = connection.gameflow_phase()
             session = connection.champ_select_session() if phase == "ChampSelect" else None
+            recommendation_lines = None
+            if session and recommender:
+                recommendation_lines = recommender.recommend_lines(
+                    session,
+                    static_data,
+                    role_priors=role_priors,
+                    top_k=args.recommendation_count,
+                )
             output = render_session(
                 phase=phase,
                 session=session,
                 static_data=static_data,
                 lockfile_label=lockfile_label,
                 role_priors=role_priors,
+                model_status=model_status,
+                recommendation_lines=recommendation_lines,
             )
         except LcuError as exc:
             output = f"League Champ Select Watcher\nError: {exc}"
@@ -109,12 +122,57 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Minimum champion sample size before trusting role priors. Default: 5",
     )
+    parser.add_argument(
+        "--model-checkpoint",
+        default="data/models/draft_transformer/best.pt",
+        help="Draft model checkpoint path. Default: data/models/draft_transformer/best.pt",
+    )
+    parser.add_argument(
+        "--champion-features",
+        default="data/processed/champion_features.csv",
+        help="Champion feature CSV path for model inference. Default: data/processed/champion_features.csv",
+    )
+    parser.add_argument(
+        "--recommendation-count",
+        type=int,
+        default=3,
+        help="How many champion recommendations to show per open role. Default: 3",
+    )
     return parser.parse_args()
 
 
 def _clear_screen() -> None:
     if sys.stdout.isatty():
         os.system("cls" if os.name == "nt" else "clear")
+
+
+def load_recommender(args: argparse.Namespace) -> tuple[DraftRecommender | None, str]:
+    candidates = [
+        Path(args.model_checkpoint),
+        Path("data/models/draft_transformer/best.pt"),
+        Path("data/models/smoke-test/best.pt"),
+    ]
+    seen: set[Path] = set()
+
+    for checkpoint in candidates:
+        checkpoint = checkpoint.expanduser()
+        if checkpoint in seen:
+            continue
+        seen.add(checkpoint)
+        if not checkpoint.is_file():
+            continue
+
+        try:
+            recommender = DraftRecommender.load(
+                checkpoint,
+                champion_features_path=args.champion_features,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return None, f"unavailable ({checkpoint}: {exc})"
+
+        return recommender, f"loaded {checkpoint}"
+
+    return None, "unavailable (no checkpoint found)"
 
 
 if __name__ == "__main__":
