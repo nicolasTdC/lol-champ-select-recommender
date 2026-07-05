@@ -29,6 +29,7 @@ def main() -> int:
             api_key=riot_api_key(),
             request_rate_limit=args.request_rate_limit,
             request_rate_burst=args.request_rate_burst,
+            log_rate_limits=args.log_rate_limits,
         )
         entries = collect_ladder_entries(client, args)
     except (RuntimeError, RiotApiError) as exc:
@@ -256,6 +257,19 @@ def parse_args() -> argparse.Namespace:
         help="Burst capacity for the request limiter. Default: 2",
     )
     parser.add_argument(
+        "--log-rate-limits",
+        dest="log_rate_limits",
+        action="store_true",
+        default=True,
+        help="Log when Riot rate limits are hit or approached. Default: on",
+    )
+    parser.add_argument(
+        "--no-log-rate-limits",
+        dest="log_rate_limits",
+        action="store_false",
+        help="Disable rate-limit logging.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=1,
@@ -473,4 +487,3 @@ def entry_label(entry: dict[str, Any]) -> str:
     wins = entry.get("wins", "?")
     losses = entry.get("losses", "?")
     return f"{tier} {rank} {lp}LP {wins}W/{losses}L"
-

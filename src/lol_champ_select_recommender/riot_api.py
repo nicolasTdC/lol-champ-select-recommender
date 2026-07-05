@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+import sys
 from typing import Any
 
 
@@ -64,7 +65,8 @@ class RequestLimiter:
         self._updated_at = time.monotonic()
         self._cooldown_until = self._updated_at
 
-    def acquire(self) -> None:
+    def acquire(self) -> float:
+        total_wait = 0.0
         while True:
             wait_seconds = 0.0
             with self._lock:
@@ -81,7 +83,9 @@ class RequestLimiter:
                     wait_seconds = max(0.0, (1.0 - self._tokens) / self.rate_per_second)
 
             if wait_seconds > 0:
+                total_wait += wait_seconds
                 time.sleep(wait_seconds)
+        return total_wait
 
     def backoff(self, seconds: float) -> None:
         if seconds <= 0:
@@ -96,6 +100,7 @@ class RiotApiClient:
     timeout: float = 10.0
     request_rate_limit: float | None = None
     request_rate_burst: int = 1
+    log_rate_limits: bool = False
 
     def __post_init__(self) -> None:
         limiter = None
@@ -265,7 +270,9 @@ class RiotApiClient:
             try:
                 limiter = getattr(self, "_request_limiter", None)
                 if limiter is not None:
-                    limiter.acquire()
+                    waited = limiter.acquire()
+                    if waited > 0 and self.log_rate_limits:
+                        print(f"[rate-limit] waited {waited:.2f}s before {url}", file=sys.stderr)
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     body = response.read().decode("utf-8")
                 break
@@ -279,6 +286,11 @@ class RiotApiClient:
                 limiter = getattr(self, "_request_limiter", None)
                 if limiter is not None:
                     limiter.backoff(sleep_seconds)
+                if self.log_rate_limits:
+                    print(
+                        f"[rate-limit] hit 429 for {url}; backing off {sleep_seconds:.2f}s",
+                        file=sys.stderr,
+                    )
                 time.sleep(sleep_seconds)
                 attempt += 1
             except OSError as exc:

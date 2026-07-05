@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import urllib.error
@@ -96,6 +97,27 @@ class RiotApiTest(unittest.TestCase):
         self.assertEqual(data, {"ok": True})
         self.assertEqual(mocked_urlopen.call_count, 2)
         mocked_sleep.assert_called()
+
+    def test_request_host_json_logs_429_backoff_when_enabled(self) -> None:
+        client = RiotApiClient(api_key="test-key", timeout=0.1, log_rate_limits=True)
+        response = FakeHttpResponse(b'{"ok": true}')
+        error = urllib.error.HTTPError(
+            "https://example.com",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "0"},
+            io.BytesIO(b'{"status":{"status_code":429}}'),
+        )
+        stderr = io.StringIO()
+
+        with patch.object(urllib.request, "urlopen", side_effect=[error, response]), patch(
+            "lol_champ_select_recommender.riot_api.time.sleep"
+        ), contextlib.redirect_stderr(stderr):
+            data = client._request_host_json("example.com", "/test")
+
+        self.assertEqual(data, {"ok": True})
+        self.assertIn("rate-limit", stderr.getvalue())
+        self.assertIn("backing off", stderr.getvalue())
 
     def test_download_match_writes_file_and_skips_existing_without_force(self) -> None:
         client = FakeMatchClient()
