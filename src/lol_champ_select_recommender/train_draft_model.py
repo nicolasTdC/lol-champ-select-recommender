@@ -213,6 +213,7 @@ def main() -> int:
     best_val_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
         train_dataset.set_epoch(epoch)
+        val_dataset.set_epoch(epoch)
         train_loss, train_acc, train_top5, train_top10, train_coarse_acc, train_mrr, train_macro_f1 = run_epoch(
             torch,
             model,
@@ -228,8 +229,23 @@ def main() -> int:
             train=True,
             batch_fraction=args.train_fraction,
             progress_label="train",
+            eval_every_batches=args.eval_every_train_batches,
+            eval_callback=build_mid_epoch_eval_callback(
+                torch,
+                model,
+                val_dataset,
+                batch_size=args.batch_size,
+                device=device,
+                criterion=criterion,
+                coarse_criterion=coarse_criterion,
+                coarse_loss_weight=args.coarse_loss_weight,
+                use_hierarchy=args.use_hierarchy,
+                eval_fraction=args.mid_epoch_eval_fraction,
+                epoch=epoch,
+            )
+            if args.eval_every_train_batches > 0
+            else None,
         )
-        val_dataset.set_epoch(epoch)
         val_loss, val_acc, val_top5, val_top10, val_coarse_acc, val_mrr, val_macro_f1 = run_epoch(
             torch,
             model,
@@ -286,6 +302,8 @@ def main() -> int:
                 "finetune_historical_ratio": args.finetune_historical_ratio,
                 "train_fraction": args.train_fraction,
                 "eval_fraction": args.eval_fraction,
+                "eval_every_train_batches": args.eval_every_train_batches,
+                "mid_epoch_eval_fraction": args.mid_epoch_eval_fraction,
                 "lr_scheduler": args.lr_scheduler,
                 "lr_scheduler_factor": args.lr_scheduler_factor,
                 "lr_scheduler_patience": args.lr_scheduler_patience,
@@ -405,6 +423,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Fraction of validation batches to evaluate each epoch. Useful for faster sweeps. Default: 1.0",
+    )
+    parser.add_argument(
+        "--eval-every-train-batches",
+        type=int,
+        default=0,
+        help="Run an extra validation pass every N train batches within each epoch. 0 disables it. Default: 0",
+    )
+    parser.add_argument(
+        "--mid-epoch-eval-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of validation batches for mid-epoch evals. Default: 0.25",
     )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", help="Torch device override, e.g. cpu, cuda")
@@ -697,6 +727,8 @@ def run_epoch(
     train: bool,
     batch_fraction: float = 1.0,
     progress_label: str = "train",
+    eval_every_batches: int = 0,
+    eval_callback=None,
 ) -> tuple[float, float, float, float, float, float, float]:
     model.train(train)
     total_loss = 0.0
@@ -719,7 +751,7 @@ def run_epoch(
         limit = max(1, int(math.ceil(len(batch_starts) * max(0.0, batch_fraction))))
         batch_starts = batch_starts[:limit]
 
-    for start in tqdm(batch_starts, desc=progress_label, leave=False, dynamic_ncols=True):
+    for batch_number, start in enumerate(tqdm(batch_starts, desc=progress_label, leave=False, dynamic_ncols=True), start=1):
         examples = [dataset[index] for index in indices[start : start + batch_size]]
         feature_ids = torch.tensor([example.feature_ids for example in examples], dtype=torch.long, device=device)
         query_index = torch.tensor([example.query_index for example in examples], dtype=torch.long, device=device)
@@ -766,11 +798,56 @@ def run_epoch(
                 true_positive_counts[target_id] = true_positive_counts.get(target_id, 0) + 1
         total_loss += float(loss.item()) * len(examples)
         total_examples += len(examples)
+        if train and eval_callback is not None and eval_every_batches > 0 and batch_number % eval_every_batches == 0:
+            eval_callback(batch_number, len(batch_starts))
+            model.train(True)
 
     macro_f1 = _macro_f1(label_counts, pred_counts, true_positive_counts)
     if total_examples == 0:
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     return total_loss / total_examples, total_correct / total_examples, total_top5 / total_examples, total_top10 / total_examples, total_coarse_correct / total_examples, total_mrr / total_examples, macro_f1
+
+
+def build_mid_epoch_eval_callback(
+    torch,
+    model,
+    val_dataset: DraftDataset,
+    *,
+    batch_size: int,
+    device,
+    criterion,
+    coarse_criterion,
+    coarse_loss_weight: float,
+    use_hierarchy: bool,
+    eval_fraction: float,
+    epoch: int,
+):
+    def callback(batch_number: int, total_batches: int) -> None:
+        val_loss, val_acc, val_top5, val_top10, val_coarse_acc, val_mrr, val_macro_f1 = run_epoch(
+            torch,
+            model,
+            val_dataset,
+            batch_size=batch_size,
+            device=device,
+            criterion=criterion,
+            coarse_criterion=coarse_criterion,
+            coarse_loss_weight=coarse_loss_weight,
+            use_teacher_forcing_coarse=False,
+            use_hierarchy=use_hierarchy,
+            optimizer=None,
+            train=False,
+            batch_fraction=eval_fraction,
+            progress_label=f"mid-eval e{epoch:03d} b{batch_number}",
+        )
+        print(
+            f"mid_epoch epoch={epoch:03d} batch={batch_number}/{total_batches} "
+            f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} "
+            f"val_top5={val_top5:.4f} val_top10={val_top10:.4f} "
+            f"val_coarse_acc={val_coarse_acc:.4f} val_mrr={val_mrr:.4f} "
+            f"val_macro_f1={val_macro_f1:.4f}"
+        )
+
+    return callback
 
 
 def _topk_hits(logits, target, *, k: int) -> int:
