@@ -127,8 +127,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--role-priors-min-games",
         type=int,
-        default=5,
-        help="Minimum champion sample size before trusting role priors. Default: 5",
+        default=1,
+        help="Minimum champion sample size before trusting role priors. Default: 1",
     )
     parser.add_argument(
         "--model-checkpoint",
@@ -143,8 +143,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--recommendation-count",
         type=int,
-        default=3,
-        help="How many champion recommendations to show per open role. Default: 3",
+        default=10,
+        help="How many champion recommendations to show per open role. Default: 10",
     )
     parser.add_argument(
         "--player-stats",
