@@ -56,6 +56,30 @@ class PlayerPruningTest(unittest.TestCase):
         self.assertEqual(extrapolated_soft_prune_candidates([1, 2, 3, 4, 5], prune_index=index), [1, 4])
         self.assertEqual(extrapolated_hard_prune_candidates([1, 2, 3, 4, 5], role="top", prune_index=index), [1, 4])
 
+    def test_lane_recommendations_use_role_totals(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "player_stats.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "player,champion_id,champion_name,role,role_name,games,wins,losses,win_rate",
+                        "alice,1,Annie,utility,Support,12,8,4,0.6667",
+                        "alice,2,Olaf,utility,Support,10,5,5,0.5000",
+                        "alice,3,Galio,middle,Mid,8,4,4,0.5000",
+                        "alice,4,Shen,jungle,Jungle,10,7,3,0.7000",
+                        "alice,5,Sett,top,Top,18,8,10,0.4444",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            index = load_player_prune_index(path)
+
+        self.assertIsNotNone(index)
+        assert index is not None
+        self.assertEqual([role for role, _stats in index.hard_lane_recommendations()], ["utility"])
+        self.assertEqual([role for role, _stats in index.soft_lane_recommendations()], ["jungle", "middle"])
+
 
 if __name__ == "__main__":
     unittest.main()

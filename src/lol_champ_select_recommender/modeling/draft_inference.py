@@ -332,6 +332,9 @@ class DraftRecommender:
             return []
 
         lines = ["Recommendations"]
+        lane_lines = self.lane_recommendation_lines()
+        if lane_lines:
+            lines.extend(lane_lines)
         for recommendation in recommendations:
             lines.append(f"  {recommendation.role_label}")
             lines.append(f"    Raw: {_format_pick_list(recommendation.raw, static_data)}")
@@ -378,6 +381,19 @@ class DraftRecommender:
                     f"{_format_pick_list(recommendation.whitelisted_extrapolated_hard, static_data)}"
                 )
         return lines
+
+    def lane_recommendation_lines(self) -> list[str]:
+        player_prune_index = getattr(self, "player_prune_index", None)
+        if player_prune_index is None:
+            return []
+
+        hard = player_prune_index.hard_lane_recommendations()
+        soft = player_prune_index.soft_lane_recommendations()
+        return [
+            "  Lane",
+            f"    Hard: {_format_lane_list(hard)}",
+            f"    Soft: {_format_lane_list(soft)}",
+        ]
 
     def prune_status(self) -> str:
         if self.player_prune_index is None:
@@ -666,6 +682,15 @@ def _format_pick_list(picks: list[DraftPickRecommendation], static_data: StaticD
     if not picks:
         return "-"
     return ", ".join(f"{static_data.champion_name(pick.champion_id)} {pick.score:.0%}" for pick in picks)
+
+
+def _format_lane_list(lanes: list[tuple[str, Any]]) -> str:
+    if not lanes:
+        return "-"
+    return ", ".join(
+        f"{ROLE_NAMES.get(role, role)} {stats.win_rate:.0%} ({stats.games}g)"
+        for role, stats in lanes
+    )
 
 
 def _as_int(value: Any) -> int | None:

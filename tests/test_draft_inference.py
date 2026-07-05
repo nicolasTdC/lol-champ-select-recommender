@@ -11,6 +11,7 @@ from lol_champ_select_recommender.modeling.draft_inference import (
     build_live_queries,
     infer_my_side,
 )
+from lol_champ_select_recommender.modeling.player_pruning import PlayerPruneIndex, PruneStats
 
 
 class DraftInferenceTest(unittest.TestCase):
@@ -305,6 +306,45 @@ class DraftInferenceTest(unittest.TestCase):
         self.assertIn("    Extrapolated Hard: Olaf 100%", lines)
         self.assertIn("    Whitelisted Soft: unavailable", lines)
         self.assertIn("    Whitelisted Hard: unavailable", lines)
+
+    def test_recommend_lines_show_lane_recommendations_from_player_stats(self) -> None:
+        static_data = StaticData(
+            version="test",
+            champions={1: "Annie"},
+            summoner_spells={},
+            champion_keys={1: "Annie"},
+        )
+        recommender = object.__new__(DraftRecommender)
+        recommender.player_prune_index = PlayerPruneIndex(
+            source="test.csv",
+            overall_by_champion={},
+            by_role_by_champion={},
+            by_role={
+                "utility": PruneStats(games=22, wins=12, losses=10),
+                "jungle": PruneStats(games=10, wins=7, losses=3),
+                "top": PruneStats(games=18, wins=8, losses=10),
+            },
+        )
+        recommender.recommend = lambda *args, **kwargs: [  # type: ignore[assignment]
+            DraftRoleRecommendation(
+                role="top",
+                raw=[DraftPickRecommendation(champion_id=1, score=1.0)],
+                soft=None,
+                hard=None,
+                extrapolated_soft=None,
+                extrapolated_hard=None,
+                whitelisted_soft=None,
+                whitelisted_hard=None,
+                whitelisted_extrapolated_soft=None,
+                whitelisted_extrapolated_hard=None,
+            )
+        ]
+
+        lines = recommender.recommend_lines({}, static_data)
+
+        self.assertIn("  Lane", lines)
+        self.assertIn("    Hard: Support 55% (22g)", lines)
+        self.assertIn("    Soft: Jungle 70% (10g)", lines)
 
     def test_recommend_lines_show_whitelisted_views(self) -> None:
         static_data = StaticData(
