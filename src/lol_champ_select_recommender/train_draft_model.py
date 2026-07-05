@@ -80,18 +80,7 @@ def main() -> int:
         print(f"Error: no champion features found in {args.champion_features}", file=sys.stderr)
         return 1
 
-    checkpoint = None
-    if args.init_checkpoint:
-        checkpoint = torch.load(Path(args.init_checkpoint), map_location="cpu")
-        model_vocab = checkpoint["model_vocab"]
-        model_config = checkpoint["model_config"]
-    else:
-        model_vocab = None
-        model_config = None
-
     champion_features = champion_features_by_id(feature_rows)
-
-    draft_rows = filter_rows_for_finetuning(draft_rows, model_vocab) if model_vocab is not None else draft_rows
     if args.finetune_patch:
         draft_rows, finetune_summary = build_finetune_rows(
             draft_rows,
@@ -114,7 +103,16 @@ def main() -> int:
     train_rows = draft_rows[:split_index]
     val_rows = draft_rows[split_index:] or draft_rows[: min(len(draft_rows), args.batch_size)]
 
-    if model_vocab is None:
+    model_vocab = build_model_vocab(train_rows, feature_rows, numeric_bins=args.numeric_bins)
+    checkpoint = None
+    checkpoint_model_config = None
+    if args.init_checkpoint:
+        checkpoint = torch.load(Path(args.init_checkpoint), map_location="cpu")
+        checkpoint_model_config = checkpoint["model_config"]
+        draft_rows = filter_rows_for_finetuning(draft_rows, model_vocab)
+        split_index = max(1, int(len(draft_rows) * (1 - args.val_split)))
+        train_rows = draft_rows[:split_index]
+        val_rows = draft_rows[split_index:] or draft_rows[: min(len(draft_rows), args.batch_size)]
         model_vocab = build_model_vocab(train_rows, feature_rows, numeric_bins=args.numeric_bins)
 
     output_dir = Path(args.output_dir)
@@ -147,7 +145,7 @@ def main() -> int:
     )
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Using {device=}")
-    if model_config is None:
+    if checkpoint_model_config is None:
         model_config = {
             "shared_vocab_size": model_vocab["shared_vocab_size"],
             "champion_vocab_size": model_vocab["champion_vocab_size"],
@@ -159,6 +157,19 @@ def main() -> int:
             "use_role_heads": True,
             "use_hierarchy": args.use_hierarchy,
             "coarse_bucket_size": model_vocab["coarse_bucket_size"],
+        }
+    else:
+        model_config = {
+            "shared_vocab_size": model_vocab["shared_vocab_size"],
+            "champion_vocab_size": model_vocab["champion_vocab_size"],
+            "coarse_bucket_size": model_vocab["coarse_bucket_size"],
+            "d_model": checkpoint_model_config["d_model"],
+            "num_heads": checkpoint_model_config["num_heads"],
+            "num_layers": checkpoint_model_config["num_layers"],
+            "dim_feedforward": checkpoint_model_config["dim_feedforward"],
+            "dropout": checkpoint_model_config["dropout"],
+            "use_role_heads": bool(checkpoint_model_config.get("use_role_heads", False)),
+            "use_hierarchy": bool(checkpoint_model_config.get("use_hierarchy", False)),
         }
     model = SharedFeatureDraftTransformer(
         shared_vocab_size=model_config["shared_vocab_size"],
@@ -173,8 +184,8 @@ def main() -> int:
         use_hierarchy=bool(model_config.get("use_hierarchy", False)),
     ).to(device)
     if checkpoint is not None:
-        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
-        print(f"Loaded checkpoint from {args.init_checkpoint}")
+        load_finetune_checkpoint(model, checkpoint["model_state_dict"], checkpoint["model_vocab"], model_vocab)
+        print(f"Loaded checkpoint from {args.init_checkpoint} with vocab expansion")
     print(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = torch.nn.CrossEntropyLoss(
@@ -234,13 +245,13 @@ def main() -> int:
             "model_config": {
                 "shared_vocab_size": model_vocab["shared_vocab_size"],
                 "champion_vocab_size": model_vocab["champion_vocab_size"],
-                "d_model": args.d_model,
-                "num_heads": args.num_heads,
-                "num_layers": args.num_layers,
-                "dim_feedforward": args.dim_feedforward,
-                "dropout": args.dropout,
-                "use_role_heads": True,
-                "use_hierarchy": args.use_hierarchy,
+                "d_model": model_config["d_model"],
+                "num_heads": model_config["num_heads"],
+                "num_layers": model_config["num_layers"],
+                "dim_feedforward": model_config["dim_feedforward"],
+                "dropout": model_config["dropout"],
+                "use_role_heads": bool(model_config.get("use_role_heads", False)),
+                "use_hierarchy": bool(model_config.get("use_hierarchy", False)),
                 "coarse_bucket_size": model_vocab["coarse_bucket_size"],
             },
             "model_vocab": model_vocab,
@@ -384,6 +395,80 @@ def filter_rows_for_finetuning(
         if all(to_int(side.get(role)) in known_champion_ids for role in POSITION_ORDER):
             filtered_rows.append(row)
     return filtered_rows
+
+
+def load_finetune_checkpoint(model, checkpoint_state_dict: dict[str, Any], checkpoint_vocab: dict[str, Any], model_vocab: dict[str, Any]) -> None:
+    current_state = model.state_dict()
+    updated_state = dict(current_state)
+
+    for key, value in checkpoint_state_dict.items():
+        if key not in current_state:
+            continue
+        target = current_state[key]
+        if key == "embedding.weight":
+            updated_state[key] = remap_embedding_weights(value, checkpoint_vocab, model_vocab, target)
+            continue
+
+        if key in {"output.weight", "output.bias"} or key.startswith("role_outputs.") or key.startswith("role_coarse_outputs."):
+            updated_state[key] = remap_head_weights(key, value, checkpoint_vocab, model_vocab, target)
+            continue
+
+        if target.shape == value.shape:
+            updated_state[key] = value
+
+    model.load_state_dict(updated_state, strict=True)
+
+
+def remap_embedding_weights(
+    checkpoint_weights,
+    checkpoint_vocab: dict[str, Any],
+    model_vocab: dict[str, Any],
+    target_tensor,
+):
+    remapped = target_tensor.clone()
+    checkpoint_offsets = checkpoint_vocab["feature_offsets"]
+    model_offsets = model_vocab["feature_offsets"]
+    for feature_name in checkpoint_vocab["token_features"]:
+        old_vocab = checkpoint_vocab["feature_vocabs"][feature_name]
+        new_vocab = model_vocab["feature_vocabs"][feature_name]
+        old_offset = int(checkpoint_offsets[feature_name])
+        new_offset = int(model_offsets[feature_name])
+        for token, old_local_id in old_vocab.items():
+            if token not in new_vocab:
+                continue
+            new_local_id = int(new_vocab[token])
+            remapped[new_offset + new_local_id] = checkpoint_weights[old_offset + int(old_local_id)]
+    return remapped
+
+
+def remap_head_weights(
+    key: str,
+    checkpoint_tensor,
+    checkpoint_vocab: dict[str, Any],
+    model_vocab: dict[str, Any],
+    target_tensor,
+):
+    remapped = target_tensor.clone()
+    if key.startswith("role_coarse_outputs.") and "coarse_bucket_to_id" in checkpoint_vocab:
+        old_vocab = checkpoint_vocab["coarse_bucket_to_id"]
+        new_vocab = model_vocab["coarse_bucket_to_id"]
+    else:
+        old_vocab = checkpoint_vocab["champion_token_to_id"]
+        new_vocab = model_vocab["champion_token_to_id"]
+
+    if checkpoint_tensor.dim() == 2:
+        for token, old_index in old_vocab.items():
+            if token not in new_vocab:
+                continue
+            new_index = int(new_vocab[token])
+            remapped[new_index] = checkpoint_tensor[int(old_index)]
+    elif checkpoint_tensor.dim() == 1:
+        for token, old_index in old_vocab.items():
+            if token not in new_vocab:
+                continue
+            new_index = int(new_vocab[token])
+            remapped[new_index] = checkpoint_tensor[int(old_index)]
+    return remapped
 
 
 def build_finetune_rows(

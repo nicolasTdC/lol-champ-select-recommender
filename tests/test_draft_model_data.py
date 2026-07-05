@@ -11,6 +11,7 @@ from lol_champ_select_recommender.train_draft_model import build_champion_loss_w
 from lol_champ_select_recommender.train_draft_model import build_finetune_rows
 from lol_champ_select_recommender.train_draft_model import build_lr_scheduler
 from lol_champ_select_recommender.train_draft_model import filter_rows_for_finetuning
+from lol_champ_select_recommender.train_draft_model import load_finetune_checkpoint
 from lol_champ_select_recommender.train_draft_model import _macro_f1
 from lol_champ_select_recommender.train_draft_model import _mean_reciprocal_rank
 from lol_champ_select_recommender.train_draft_model import _topk_hits
@@ -252,6 +253,73 @@ class DraftModelDataTest(unittest.TestCase):
 
         self.assertEqual(len(filtered_rows), 1)
         self.assertEqual(filtered_rows[0]["match_id"], "BR1_1")
+
+    def test_finetune_checkpoint_keeps_old_weights_and_initializes_new_champion(self) -> None:
+        SharedFeatureDraftTransformer = build_model_class()
+        old_feature_rows = [
+            feature_row(82, "Mordekaiser", "Fighter", "Mage", 175, 8, 5, 6, 7),
+            feature_row(103, "Ahri", "Mage", "Assassin", 550, 3, 4, 8, 5),
+        ]
+        current_feature_rows = [
+            *old_feature_rows,
+            feature_row(90, "Malzahar", "Mage", "Support", 550, 2, 3, 9, 6),
+        ]
+        old_vocab = build_model_vocab([], old_feature_rows, numeric_bins=4)
+        current_vocab = build_model_vocab([], current_feature_rows, numeric_bins=4)
+
+        old_model = SharedFeatureDraftTransformer(
+            shared_vocab_size=old_vocab["shared_vocab_size"],
+            champion_vocab_size=old_vocab["champion_vocab_size"],
+            coarse_bucket_size=old_vocab["coarse_bucket_size"],
+            d_model=4,
+            num_heads=1,
+            num_layers=1,
+            dim_feedforward=8,
+            dropout=0.0,
+            use_role_heads=True,
+            use_hierarchy=False,
+        )
+        with torch.no_grad():
+            for row_index in range(old_vocab["shared_vocab_size"]):
+                old_model.embedding.weight[row_index].fill_(float(row_index))
+            for row_index in range(old_vocab["champion_vocab_size"]):
+                old_model.output.weight[row_index].fill_(float(row_index + 100))
+                old_model.output.bias[row_index].fill_(float(row_index + 200))
+                for role in old_model.role_outputs:
+                    old_model.role_outputs[role].weight[row_index].fill_(float(row_index + 300))
+                    old_model.role_outputs[role].bias[row_index].fill_(float(row_index + 400))
+
+        new_model = SharedFeatureDraftTransformer(
+            shared_vocab_size=current_vocab["shared_vocab_size"],
+            champion_vocab_size=current_vocab["champion_vocab_size"],
+            coarse_bucket_size=current_vocab["coarse_bucket_size"],
+            d_model=4,
+            num_heads=1,
+            num_layers=1,
+            dim_feedforward=8,
+            dropout=0.0,
+            use_role_heads=True,
+            use_hierarchy=False,
+        )
+        with torch.no_grad():
+            for parameter in new_model.parameters():
+                parameter.fill_(-1)
+
+        load_finetune_checkpoint(new_model, old_model.state_dict(), old_vocab, current_vocab)
+
+        old_role_top = global_feature_id("role", "top", old_vocab)
+        new_role_top = global_feature_id("role", "top", current_vocab)
+        self.assertTrue(torch.all(new_model.embedding.weight[new_role_top] == float(old_role_top)))
+
+        old_champion_token_id = old_vocab["champion_id_to_token_id"]["103"]
+        new_champion_token_id = current_vocab["champion_id_to_token_id"]["103"]
+        self.assertTrue(torch.all(new_model.output.weight[new_champion_token_id] == float(old_champion_token_id + 100)))
+        self.assertTrue(torch.all(new_model.output.bias[new_champion_token_id] == float(old_champion_token_id + 200)))
+        self.assertTrue(torch.all(new_model.role_outputs["top"].weight[new_champion_token_id] == float(old_champion_token_id + 300)))
+        self.assertTrue(torch.all(new_model.role_outputs["top"].bias[new_champion_token_id] == float(old_champion_token_id + 400)))
+
+        new_champion_90_token_id = current_vocab["champion_id_to_token_id"]["90"]
+        self.assertTrue(torch.all(new_model.output.weight[new_champion_90_token_id] == -1))
 
 
 def sample_draft_row():
