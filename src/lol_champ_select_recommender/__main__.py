@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         help="How many champion recommendations to show per open role. Default: 3",
     )
     parser.add_argument(
+        "--player-stats",
+        default="data/processed/player_champion_role_stats.csv",
+        help="Per-player champion-role stats CSV for heuristic pruning. Default: data/processed/player_champion_role_stats.csv",
+    )
+    parser.add_argument(
         "--debug-inference",
         action="store_true",
         help="Print the live inference token sequence and decoded feature values.",
@@ -179,11 +184,13 @@ def load_recommender(args: argparse.Namespace) -> tuple[DraftRecommender | None,
             recommender = DraftRecommender.load(
                 checkpoint,
                 champion_features_path=args.champion_features,
+                player_stats_path=args.player_stats,
             )
         except Exception as exc:  # noqa: BLE001
             return None, f"unavailable ({checkpoint}: {exc})"
 
-        return recommender, f"loaded {checkpoint}"
+        prune_status = recommender.prune_status()
+        return recommender, f"loaded {checkpoint} | player-prune: {prune_status}"
 
     return None, "unavailable (no checkpoint found)"
 

@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from lol_champ_select_recommender.modeling.player_pruning import load_player_prune_index, prune_candidates
+
+
+class PlayerPruningTest(unittest.TestCase):
+    def test_prune_rules_use_soft_and_hard_thresholds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "player_stats.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "player,champion_id,champion_name,role,role_name,games,wins,losses,win_rate",
+                        "alice,1,Annie,top,Top,12,7,5,0.5833",
+                        "bob,1,Annie,top,Top,8,4,4,0.5000",
+                        "alice,1,Annie,jungle,Jungle,3,1,2,0.3333",
+                        "bob,2,Olaf,top,Top,21,10,11,0.4762",
+                        "bob,3,Galio,top,Top,19,8,11,0.4211",
+                        "bob,1,Annie,utility,Support,1,1,0,1.0000",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            index = load_player_prune_index(path)
+
+        self.assertIsNotNone(index)
+        assert index is not None
+        self.assertTrue(index.passes_soft(1))
+        self.assertTrue(index.passes_hard(1, "top"))
+        self.assertTrue(index.passes_hard(1, "jungle"))
+        self.assertFalse(index.passes_soft(2))
+        self.assertFalse(index.passes_hard(2, "top"))
+        self.assertFalse(index.passes_soft(3))
+        self.assertFalse(index.passes_hard(3, "top"))
+        self.assertEqual(prune_candidates([1, 2, 3], role="top", prune_index=index), [1])
+
+
+if __name__ == "__main__":
+    unittest.main()

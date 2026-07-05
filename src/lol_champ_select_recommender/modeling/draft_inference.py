@@ -16,6 +16,7 @@ from .draft_data import (
     token_global_feature_ids,
 )
 from .draft_model import build_model_class, require_torch
+from .player_pruning import PlayerPruneIndex, load_player_prune_index, prune_candidates
 
 
 @dataclass(frozen=True)
@@ -56,11 +57,13 @@ class DraftRecommender:
         model_vocab: dict[str, Any],
         champion_features: dict[int, dict[str, Any]],
         torch_module,
+        player_prune_index: PlayerPruneIndex | None = None,
     ) -> None:
         self.model = model
         self.model_vocab = model_vocab
         self.champion_features = champion_features
         self._torch = torch_module
+        self.player_prune_index = player_prune_index
 
     @classmethod
     def load(
@@ -68,6 +71,7 @@ class DraftRecommender:
         checkpoint_path: str | Path,
         *,
         champion_features_path: str | Path = "data/processed/champion_features.csv",
+        player_stats_path: str | Path | None = None,
         device: str | None = None,
     ) -> DraftRecommender:
         torch, _nn = require_torch()
@@ -76,6 +80,7 @@ class DraftRecommender:
         model_config = checkpoint["model_config"]
         champion_rows = load_champion_feature_rows(champion_features_path)
         champion_features = champion_features_by_id(champion_rows)
+        player_prune_index = load_player_prune_index(player_stats_path) if player_stats_path else None
 
         SharedFeatureDraftTransformer = build_model_class()
         model = SharedFeatureDraftTransformer(
@@ -93,7 +98,7 @@ class DraftRecommender:
         model = model.to(torch.device(resolved_device))
         model.eval()
 
-        return cls(model, model_vocab, champion_features, torch)
+        return cls(model, model_vocab, champion_features, torch, player_prune_index)
 
     def recommend(
         self,
@@ -125,29 +130,36 @@ class DraftRecommender:
             logits = self.model(feature_ids, query_index)
 
         token_id_to_champion_id = _token_id_to_champion_id(self.model_vocab)
-        masked_special_ids = list(range(len(SPECIAL_CHAMPION_TOKENS)))
 
         recommendations: list[DraftRoleRecommendation] = []
         for row_index, query in enumerate(queries):
             row_logits = logits[row_index].clone()
-            row_logits[masked_special_ids] = float("-inf")
-            for champion_id in query.blocked_champion_ids:
-                token_id = self.model_vocab["champion_id_to_token_id"].get(str(champion_id))
-                if token_id is not None:
-                    row_logits[int(token_id)] = float("-inf")
-
-            probabilities = torch.softmax(row_logits, dim=0)
-            available = int(torch.isfinite(row_logits).sum().item())
-            if available <= 0:
-                continue
-
-            k = min(max(1, top_k), available)
-            top_probs, top_token_ids = torch.topk(probabilities, k=k)
-            picks: list[DraftPickRecommendation] = []
-            for probability, token_id in zip(top_probs.tolist(), top_token_ids.tolist()):
+            ranked_token_ids = torch.argsort(row_logits, descending=True).tolist()
+            ranked_champion_ids: list[int] = []
+            for token_id in ranked_token_ids:
                 champion_id = token_id_to_champion_id.get(int(token_id))
                 if champion_id is None:
                     continue
+                if champion_id in query.blocked_champion_ids:
+                    continue
+                ranked_champion_ids.append(champion_id)
+
+            ranked_champion_ids = prune_candidates(
+                ranked_champion_ids,
+                role=query.role,
+                prune_index=self.player_prune_index,
+            )
+            if not ranked_champion_ids:
+                continue
+
+            token_ids = [
+                int(self.model_vocab["champion_id_to_token_id"][str(champion_id)])
+                for champion_id in ranked_champion_ids
+            ]
+            probabilities = torch.softmax(row_logits[token_ids], dim=0)
+            k = min(max(1, top_k), len(ranked_champion_ids))
+            picks: list[DraftPickRecommendation] = []
+            for champion_id, probability in zip(ranked_champion_ids[:k], probabilities[:k].tolist()):
                 picks.append(DraftPickRecommendation(champion_id=champion_id, score=float(probability)))
 
             if picks:
@@ -200,6 +212,11 @@ class DraftRecommender:
             )
             lines.append(f"  {recommendation.role_label}: {picks}")
         return lines
+
+    def prune_status(self) -> str:
+        if self.player_prune_index is None:
+            return "unavailable"
+        return f"loaded {self.player_prune_index.source}"
 
 
 def build_live_queries(

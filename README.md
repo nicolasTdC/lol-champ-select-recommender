@@ -140,6 +140,18 @@ data/processed/champion_feature_vocab.json
 
 It includes categorical tokens and IDs for tags, resource type, and melee/ranged range type, plus Data Dragon `info` ratings and base stats. The categorical IDs are meant for model embedding layers.
 
+Collect per-player champion-role stats for inference pruning:
+
+```bash
+python collect_player_stats.py --riot-id "GameName#TAG" --riot-id "Other#TAG"
+```
+
+The watcher can then prune model rankings with:
+
+```bash
+python watch.py --player-stats data/processed/player_champion_role_stats.csv
+```
+
 ## Collect Server-Level Ranked Data
 
 The single-account fetcher is biased toward one player's games. For broader server data, seed from League-V4 ranked ladder entries and download recent Match-V5 games from those players:
