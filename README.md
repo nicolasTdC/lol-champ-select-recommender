@@ -197,3 +197,13 @@ Champion and summoner spell names are resolved from Data Dragon and cached under
 ## Notes
 
 The League Client API is local and can change with League updates. Treat this as a prototype surface and keep the app read-only unless Riot's current policies and API behavior clearly allow a change.
+
+## QUICK START
+```
+  python collect_ranked_matches.py --platform br1 --tiers EMERALD PLATINUM DIAMOND MASTER GRANDMASTER CHALLENGER --divisions I II III IV --pages 3 --max-players
+  100 --matches-per-player 10 --sleep 0.2
+  python aggregate_matches.py
+  python build_champion_features.py
+  python build_draft_dataset.py
+  python train_draft_model.py --epochs 10 --batch-size 32 --device cuda
+```
