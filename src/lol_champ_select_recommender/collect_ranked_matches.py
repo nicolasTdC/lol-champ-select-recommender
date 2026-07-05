@@ -91,7 +91,6 @@ def main() -> int:
             except RiotApiError as exc:
                 player_errors += 1
                 print(f"[player {player_index:>3}/{len(players)}] match IDs error: {exc}", file=sys.stderr)
-                sleep(args.sleep)
                 continue
 
             queued_for_player = 0
@@ -121,7 +120,6 @@ def main() -> int:
                 if download_executor is None:
                     status, error = download_match(client, match_id, region, match_path, force=args.force)
                     downloaded, match_errors = update_download_stats(status, error, downloaded, match_errors)
-                    sleep(args.sleep)
                 else:
                     pending_downloads.append(
                         download_executor.submit(download_match, client, match_id, region, match_path, args.force)
@@ -131,7 +129,6 @@ def main() -> int:
                 f"[player {player_index:>3}/{len(players)}] "
                 f"{entry_label(entry)} -> {len(match_ids)} ids, {queued_for_player} queued"
             )
-            sleep(args.sleep)
 
         if download_executor is not None:
             for future in concurrent.futures.as_completed(pending_downloads):
@@ -263,12 +260,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Random seed for selecting ladder players. Default: 1",
-    )
-    parser.add_argument(
-        "--sleep",
-        type=float,
-        default=0.05,
-        help="Seconds to sleep between Riot requests. Default: 0.05",
     )
     parser.add_argument(
         "--output-dir",
@@ -483,7 +474,3 @@ def entry_label(entry: dict[str, Any]) -> str:
     losses = entry.get("losses", "?")
     return f"{tier} {rank} {lp}LP {wins}W/{losses}L"
 
-
-def sleep(seconds: float) -> None:
-    if seconds > 0:
-        time.sleep(seconds)
