@@ -17,6 +17,7 @@ from lol_champ_select_recommender.modeling.draft_data import (
     build_model_vocab,
     build_training_example,
     champion_features_by_id,
+    coarse_bucket_value,
     global_feature_id,
     numeric_bin_token,
     quantile_edges,
@@ -60,6 +61,18 @@ class DraftModelDataTest(unittest.TestCase):
         )
         primary_tag_feature_index = vocab["token_features"].index("primary_tag")
         self.assertEqual(query_features[primary_tag_feature_index], expected_static_id)
+
+    def test_coarse_bucket_ignores_difficulty(self) -> None:
+        draft_rows = [sample_draft_row()]
+        feature_rows = sample_feature_rows()
+        vocab = build_model_vocab(draft_rows, feature_rows, numeric_bins=4)
+        row_low = dict(feature_rows[0], info_difficulty="1")
+        row_high = dict(feature_rows[0], info_difficulty="10")
+
+        self.assertEqual(
+            coarse_bucket_value(row_low, vocab["numeric_bin_edges"]),
+            coarse_bucket_value(row_high, vocab["numeric_bin_edges"]),
+        )
 
     def test_draft_dataset_can_upsample_rows_with_distinct_masks(self) -> None:
         draft_rows = [sample_draft_row()]

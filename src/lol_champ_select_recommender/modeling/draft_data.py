@@ -74,19 +74,6 @@ def build_model_vocab(
     for champion_id in champion_ids:
         champion_token_to_id[str(champion_id)] = len(champion_token_to_id)
     champion_id_to_token_id = {str(champion_id): champion_token_to_id[str(champion_id)] for champion_id in champion_ids}
-    coarse_bucket_values = sorted(
-        {
-            coarse_bucket_value(row)
-            for row in champion_feature_rows
-            if coarse_bucket_value(row)
-        }
-    )
-    coarse_bucket_to_id = {bucket: index for index, bucket in enumerate(coarse_bucket_values)}
-    champion_id_to_coarse_bucket_id = {
-        str(int(row["champion_id"])): coarse_bucket_to_id.get(coarse_bucket_value(row), 0)
-        for row in champion_feature_rows
-        if str(row.get("champion_id", "")).isdigit()
-    }
 
     numeric_feature_names = sorted(
         name
@@ -96,6 +83,19 @@ def build_model_vocab(
     numeric_bin_edges = {
         name: quantile_edges([to_float(row.get(name)) for row in champion_feature_rows], numeric_bins)
         for name in numeric_feature_names
+    }
+    coarse_bucket_values = sorted(
+        {
+            coarse_bucket_value(row, numeric_bin_edges)
+            for row in champion_feature_rows
+            if coarse_bucket_value(row, numeric_bin_edges)
+        }
+    )
+    coarse_bucket_to_id = {bucket: index for index, bucket in enumerate(coarse_bucket_values)}
+    champion_id_to_coarse_bucket_id = {
+        str(int(row["champion_id"])): coarse_bucket_to_id.get(coarse_bucket_value(row, numeric_bin_edges), 0)
+        for row in champion_feature_rows
+        if str(row.get("champion_id", "")).isdigit()
     }
 
     feature_vocabs: dict[str, dict[str, int]] = {
@@ -319,12 +319,46 @@ def category_value(value: Any) -> str:
     return token if token else NONE_TOKEN
 
 
-def coarse_bucket_value(row: dict[str, Any]) -> str:
-    primary_tag = category_value(row.get("primary_tag"))
-    range_type = category_value(row.get("range_type"))
-    if primary_tag == NONE_TOKEN or range_type == NONE_TOKEN:
+COARSE_STAT_FEATURES = (
+    "info_attack",
+    "info_defense",
+    "info_magic",
+    "stat_armor",
+    "stat_armorperlevel",
+    "stat_attackdamage",
+    "stat_attackdamageperlevel",
+    "stat_attackrange",
+    "stat_attackspeed",
+    "stat_attackspeedperlevel",
+    "stat_hp",
+    "stat_hpperlevel",
+    "stat_hpregen",
+    "stat_hpregenperlevel",
+    "stat_movespeed",
+    "stat_mp",
+    "stat_mpperlevel",
+    "stat_mpregen",
+    "stat_mpregenperlevel",
+    "stat_spellblock",
+    "stat_spellblockperlevel",
+)
+
+
+def coarse_bucket_value(row: dict[str, Any], numeric_bin_edges: dict[str, list[float]]) -> str:
+    parts = [
+        category_value(row.get("primary_tag")),
+        category_value(row.get("secondary_tag")),
+        category_value(row.get("partype")),
+        category_value(row.get("range_type")),
+    ]
+    for feature_name in COARSE_STAT_FEATURES:
+        if feature_name not in numeric_bin_edges:
+            continue
+        value = to_float(row.get(feature_name))
+        parts.append(f"{feature_name}={numeric_bin_token(value, numeric_bin_edges[feature_name])}")
+    if all(part == NONE_TOKEN for part in parts[:4]):
         return ""
-    return f"{primary_tag}|{range_type}"
+    return "|".join(parts)
 
 
 def numeric_bin_token(value: float | None, edges: list[float]) -> str:
