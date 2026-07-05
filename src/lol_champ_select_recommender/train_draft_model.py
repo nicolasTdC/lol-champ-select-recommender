@@ -129,6 +129,7 @@ def main() -> int:
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = torch.nn.CrossEntropyLoss(weight=champion_loss_weights.to(device) if champion_loss_weights is not None else None)
+    scheduler = build_lr_scheduler(torch, optimizer, args)
 
     best_val_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
@@ -157,8 +158,11 @@ def main() -> int:
         print(
             f"epoch {epoch:03d} "
             f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
-            f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}"
+            f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} "
+            f"lr={optimizer.param_groups[0]['lr']:.2e}"
         )
+        if scheduler is not None:
+            scheduler.step(val_loss)
 
         checkpoint = {
             "model_state_dict": model.state_dict(),
@@ -177,6 +181,10 @@ def main() -> int:
             "special_champion_tokens": SPECIAL_CHAMPION_TOKENS,
             "train_config": {
                 "champion_loss_weight_power": args.champion_loss_weight_power,
+                "lr_scheduler": args.lr_scheduler,
+                "lr_scheduler_factor": args.lr_scheduler_factor,
+                "lr_scheduler_patience": args.lr_scheduler_patience,
+                "lr_scheduler_min_lr": args.lr_scheduler_min_lr,
             },
         }
         torch.save(checkpoint, output_dir / "last.pt")
@@ -197,6 +205,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument(
+        "--lr-scheduler",
+        choices=("none", "plateau"),
+        default="plateau",
+        help="Learning-rate scheduler to use. Default: plateau",
+    )
+    parser.add_argument(
+        "--lr-scheduler-factor",
+        type=float,
+        default=0.5,
+        help="Factor applied by ReduceLROnPlateau. Default: 0.5",
+    )
+    parser.add_argument(
+        "--lr-scheduler-patience",
+        type=int,
+        default=2,
+        help="Epochs without val-loss improvement before reducing LR. Default: 2",
+    )
+    parser.add_argument(
+        "--lr-scheduler-min-lr",
+        type=float,
+        default=1e-6,
+        help="Minimum learning rate for the scheduler. Default: 1e-6",
+    )
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--num-heads", type=int, default=4)
     parser.add_argument("--num-layers", type=int, default=2)
@@ -310,3 +342,17 @@ def build_champion_loss_weights(
             weights[token_id] = float(weights[token_id] / mean_weight)
 
     return weights
+
+
+def build_lr_scheduler(torch, optimizer, args):
+    if args.lr_scheduler == "none":
+        return None
+    if args.lr_scheduler == "plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=args.lr_scheduler_factor,
+            patience=args.lr_scheduler_patience,
+            min_lr=args.lr_scheduler_min_lr,
+        )
+    raise ValueError(f"Unsupported lr scheduler: {args.lr_scheduler}")

@@ -8,6 +8,7 @@ import torch
 
 from lol_champ_select_recommender.train_draft_model import DraftDataset
 from lol_champ_select_recommender.train_draft_model import build_champion_loss_weights
+from lol_champ_select_recommender.train_draft_model import build_lr_scheduler
 from lol_champ_select_recommender.modeling.draft_data import (
     NONE_TOKEN,
     PICK_TOKEN,
@@ -105,6 +106,17 @@ class DraftModelDataTest(unittest.TestCase):
         assert weights is not None
         self.assertGreater(weights[vocab["champion_id_to_token_id"]["103"]].item(), weights[vocab["champion_id_to_token_id"]["82"]].item())
         self.assertEqual(weights[vocab["champion_token_to_id"]["<PAD>"]].item(), 0.0)
+
+    def test_lr_scheduler_can_be_disabled(self) -> None:
+        import torch.optim
+
+        model = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        args = type("Args", (), {"lr_scheduler": "none", "lr_scheduler_factor": 0.5, "lr_scheduler_patience": 2, "lr_scheduler_min_lr": 1e-6})()
+
+        scheduler = build_lr_scheduler(torch, optimizer, args)
+
+        self.assertIsNone(scheduler)
 
 
 def sample_draft_row():
