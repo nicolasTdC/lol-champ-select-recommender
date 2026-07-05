@@ -348,3 +348,60 @@ Conclusion:
 - The run plateaued and then degraded after roughly epochs 21-28.
 - `data/models/draft_transformer/best.pt` should be used, not `last.pt`.
 - Future full pretrains should use earlier stopping around 8-10 validations without loss improvement, or reduce the max epoch budget to around 30 for this corpus/config.
+
+## 2026-07-05 - Patch 16.13 finetune from full pretrain
+
+Dataset:
+
+```text
+data/processed/draft_dataset.jsonl rows: 26199
+trainable rows: 26197
+latest patch: 16.13
+latest patch rows: 16480
+historical replay sampled: 3296
+historical pool: 9717
+```
+
+Config:
+
+```text
+--init-checkpoint data/models/draft_transformer/best.pt
+--finetune-patch 16.13 --finetune-historical-ratio 0.2
+--output-dir data/models/draft_transformer_finetune_16.13
+--use-hierarchy --d-model 192 --num-heads 1 --num-layers 4 --dim-feedforward 768
+--epochs 20 --batch-size 16 --lr 1e-4 --weight-decay 0.01
+--label-smoothing 0.03 --coarse-loss-weight 0.3 --champion-loss-weight-power 0.35
+--train-examples-per-row 4 --numeric-bins 10
+--eval-every-train-batches 1000 --mid-epoch-eval-fraction 0.25
+```
+
+Run log:
+
+```text
+data/experiments/finetune_16.13_2026-07-05_150412.log
+```
+
+Best observed validation points:
+
+| Metric | Source | Epoch | Batch | Value |
+| --- | --- | ---: | ---: | ---: |
+| Loss | mid-eval | 8 | 1000/4203 | 4.5637 |
+| Top-10 | mid-eval | 8 | 2000/4203 | 0.5439 |
+| Top-5 | mid-eval | 8 | 4000/4203 | 0.4029 |
+| Acc | mid-eval | 8 | 1000/4203 | 0.1423 |
+| MRR | mid-eval | 8 | 1000/4203 | 0.2739 |
+| Macro F1 | mid-eval | 8 | 3000/4203 | 0.0925 |
+
+Stopped manually during epoch 13 after validation degraded and LR had already stepped down. Checkpoint state:
+
+```text
+best.pt: epoch=8 source=mid_epoch batch=1000/4203 val_loss=4.5637
+last.pt: epoch=13 source=mid_epoch batch=1000/4203 val_loss=4.6006
+```
+
+Conclusion:
+
+- Finetuning helped substantially over the full pretrain checkpoint on latest-patch validation.
+- It overfit quickly; the useful finetune window was roughly 8 epochs.
+- `data/models/draft_transformer_finetune_16.13/best.pt` should be used, not `last.pt`.
+- Future latest-patch finetunes should start with fewer epochs, lower patience, or explicit early stopping around 4-6 mid-evals without improvement.
