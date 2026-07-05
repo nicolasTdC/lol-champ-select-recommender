@@ -1,0 +1,20 @@
+# Global champion blacklist entries apply to every role.
+Renata Glasc
+Zyra
+
+# Role-specific entries only affect whitelisted recommendations for that role.
+top: Vayne
+jungle: Brand
+mid: Anivia
+bot: Yasuo
+support: Nami
+
+# Role aliases are supported.
+adc: Swain
+sup: Pyke
+jg: Rell
+
+# Explicit global entries can also use all/any/*.
+all: Sona
+any: Janna
+*: Maokai

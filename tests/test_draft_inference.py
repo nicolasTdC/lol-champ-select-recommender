@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from lol_champ_select_recommender.ddragon import StaticData
 from lol_champ_select_recommender.modeling.draft_data import build_model_vocab, champion_features_by_id
@@ -10,6 +12,7 @@ from lol_champ_select_recommender.modeling.draft_inference import (
     DraftRoleRecommendation,
     build_live_queries,
     infer_my_side,
+    load_champion_blacklist,
 )
 from lol_champ_select_recommender.modeling.player_pruning import PlayerPruneIndex, PruneStats
 
@@ -377,6 +380,40 @@ class DraftInferenceTest(unittest.TestCase):
 
         self.assertIn("    Whitelisted Soft: Annie 100%", lines)
         self.assertIn("    Whitelisted Hard: ", "\n".join(lines))
+
+    def test_load_champion_blacklist_supports_global_and_role_entries(self) -> None:
+        champion_features = {
+            1: {"champion_name": "Annie", "champion_key": "Annie"},
+            2: {"champion_name": "Olaf", "champion_key": "Olaf"},
+            3: {"champion_name": "Renata Glasc", "champion_key": "RenataGlasc"},
+            67: {"champion_name": "Vayne", "champion_key": "Vayne"},
+            267: {"champion_name": "Nami", "champion_key": "Nami"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "blacklist.txt"
+            path.write_text(
+                "\n".join(
+                    [
+                        "Renata Glasc",
+                        "top: Vayne",
+                        "support: Nami",
+                        "mid: Annie",
+                        "all: Olaf",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            blacklist = load_champion_blacklist(path, champion_features)
+
+        self.assertTrue(blacklist.blocks(3, "utility"))
+        self.assertTrue(blacklist.blocks(67, "top"))
+        self.assertFalse(blacklist.blocks(67, "bottom"))
+        self.assertTrue(blacklist.blocks(267, "utility"))
+        self.assertFalse(blacklist.blocks(267, "top"))
+        self.assertTrue(blacklist.blocks(1, "middle"))
+        self.assertFalse(blacklist.blocks(1, "top"))
+        self.assertTrue(blacklist.blocks(2, "jungle"))
 
 
 if __name__ == "__main__":

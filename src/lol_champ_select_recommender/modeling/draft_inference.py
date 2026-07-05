@@ -65,6 +65,22 @@ class DecodedToken:
     values: list[tuple[str, str]]
 
 
+@dataclass(frozen=True)
+class ChampionBlacklist:
+    global_champion_ids: set[int]
+    by_role: dict[str, set[int]]
+
+    @property
+    def count(self) -> int:
+        return len(self.global_champion_ids) + sum(len(champion_ids) for champion_ids in self.by_role.values())
+
+    def is_empty(self) -> bool:
+        return self.count == 0
+
+    def blocks(self, champion_id: int, role: str) -> bool:
+        return champion_id in self.global_champion_ids or champion_id in self.by_role.get(role, set())
+
+
 class DraftRecommender:
     def __init__(
         self,
@@ -73,14 +89,14 @@ class DraftRecommender:
         champion_features: dict[int, dict[str, Any]],
         torch_module,
         player_prune_index: PlayerPruneIndex | None = None,
-        champion_blacklist: set[int] | None = None,
+        champion_blacklist: ChampionBlacklist | set[int] | None = None,
     ) -> None:
         self.model = model
         self.model_vocab = model_vocab
         self.champion_features = champion_features
         self._torch = torch_module
         self.player_prune_index = player_prune_index
-        self.champion_blacklist = champion_blacklist or set()
+        self.champion_blacklist = normalize_champion_blacklist(champion_blacklist)
 
     @classmethod
     def load(
@@ -230,9 +246,11 @@ class DraftRecommender:
                     top_k=top_k,
                     torch_module=torch,
                 )
-                if self.champion_blacklist:
+                if not self.champion_blacklist.is_empty():
                     whitelist_candidates = [
-                        champion_id for champion_id, _score in ranked_candidates if champion_id not in self.champion_blacklist
+                        champion_id
+                        for champion_id, _score in ranked_candidates
+                        if not self.champion_blacklist.blocks(champion_id, query.role)
                     ]
                     whitelisted_soft = _score_ranked_candidates(
                         [
@@ -401,8 +419,8 @@ class DraftRecommender:
         else:
             player_status = f"loaded {self.player_prune_index.source}"
         parts: list[str] = [player_status]
-        if self.champion_blacklist:
-            parts.append(f"blacklist: {len(self.champion_blacklist)} champs")
+        if not self.champion_blacklist.is_empty():
+            parts.append(f"blacklist: {self.champion_blacklist.count} entries")
         else:
             parts.append("blacklist: unavailable")
         return " | ".join(parts)
@@ -615,10 +633,10 @@ def _token_id_to_champion_id(model_vocab: dict[str, Any]) -> dict[int, int]:
 def load_champion_blacklist(
     path: str | Path,
     champion_features: dict[int, dict[str, Any]],
-) -> set[int]:
+) -> ChampionBlacklist:
     blacklist_path = Path(path)
     if not blacklist_path.is_file():
-        return set()
+        return empty_champion_blacklist()
 
     champion_lookup: dict[str, int] = {}
     for champion_id, features in champion_features.items():
@@ -627,30 +645,80 @@ def load_champion_blacklist(
             if value:
                 champion_lookup[value] = champion_id
 
-    blocked: set[int] = set()
+    blocked_global: set[int] = set()
+    blocked_by_role: dict[str, set[int]] = {}
     try:
         lines = blacklist_path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return set()
+        return empty_champion_blacklist()
 
     for line in lines:
         entry = line.strip()
         if not entry or entry.startswith("#"):
             continue
-        for token in entry.replace(",", " ").split():
-            token = token.strip()
-            if not token:
-                continue
-            try:
-                blocked.add(int(token))
-                continue
-            except ValueError:
-                pass
-            matched = champion_lookup.get(token.lower())
-            if matched is not None:
-                blocked.add(matched)
+        role, champion_text = parse_blacklist_entry(entry)
+        champion_id = champion_id_from_blacklist_text(champion_text, champion_lookup)
+        if champion_id is None:
+            continue
+        if role is None:
+            blocked_global.add(champion_id)
+        else:
+            blocked_by_role.setdefault(role, set()).add(champion_id)
 
-    return blocked
+    return ChampionBlacklist(global_champion_ids=blocked_global, by_role=blocked_by_role)
+
+
+def normalize_champion_blacklist(value: ChampionBlacklist | set[int] | None) -> ChampionBlacklist:
+    if value is None:
+        return empty_champion_blacklist()
+    if isinstance(value, ChampionBlacklist):
+        return value
+    return ChampionBlacklist(global_champion_ids=set(value), by_role={})
+
+
+def empty_champion_blacklist() -> ChampionBlacklist:
+    return ChampionBlacklist(global_champion_ids=set(), by_role={})
+
+
+def parse_blacklist_entry(entry: str) -> tuple[str | None, str]:
+    if ":" not in entry:
+        return None, entry
+
+    prefix, champion_text = entry.split(":", 1)
+    if prefix.strip().lower() in {"all", "any", "*"}:
+        return None, champion_text.strip()
+    role = normalize_blacklist_role(prefix)
+    if role is None:
+        return None, entry
+    return role, champion_text.strip()
+
+
+def normalize_blacklist_role(value: str) -> str | None:
+    token = value.strip().lower()
+    aliases = {
+        "support": "utility",
+        "sup": "utility",
+        "bot": "bottom",
+        "adc": "bottom",
+        "mid": "middle",
+        "jg": "jungle",
+    }
+    role = aliases.get(token, token)
+    if role in POSITION_ORDER:
+        return role
+    return None
+
+
+def champion_id_from_blacklist_text(text: str, champion_lookup: dict[str, int]) -> int | None:
+    token = text.strip()
+    if not token:
+        return None
+    try:
+        return int(token)
+    except ValueError:
+        pass
+    return champion_lookup.get(token.lower())
+
 
 
 def _score_ranked_candidates(
