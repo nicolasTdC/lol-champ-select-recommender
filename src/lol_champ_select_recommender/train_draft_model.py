@@ -210,7 +210,7 @@ def main() -> int:
     coarse_criterion = torch.nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     scheduler = build_lr_scheduler(torch, optimizer, args)
 
-    best_val_loss = float("inf")
+    best_val_loss_ref = {"value": float("inf")}
     for epoch in range(1, args.epochs + 1):
         train_dataset.set_epoch(epoch)
         val_dataset.set_epoch(epoch)
@@ -242,6 +242,11 @@ def main() -> int:
                 use_hierarchy=args.use_hierarchy,
                 eval_fraction=args.mid_epoch_eval_fraction,
                 epoch=epoch,
+                output_dir=output_dir,
+                model_vocab=model_vocab,
+                model_config=model_config,
+                args=args,
+                best_val_loss_ref=best_val_loss_ref,
             )
             if args.eval_every_train_batches > 0
             else None,
@@ -275,45 +280,17 @@ def main() -> int:
         if scheduler is not None:
             scheduler.step(val_loss)
 
-        checkpoint = {
-            "model_state_dict": model.state_dict(),
-            "model_config": {
-                "shared_vocab_size": model_vocab["shared_vocab_size"],
-                "champion_vocab_size": model_vocab["champion_vocab_size"],
-                "d_model": model_config["d_model"],
-                "num_heads": model_config["num_heads"],
-                "num_layers": model_config["num_layers"],
-                "dim_feedforward": model_config["dim_feedforward"],
-                "dropout": model_config["dropout"],
-                "use_role_heads": bool(model_config.get("use_role_heads", False)),
-                "use_hierarchy": bool(model_config.get("use_hierarchy", False)),
-                "coarse_bucket_size": model_vocab["coarse_bucket_size"],
-            },
-            "model_vocab": model_vocab,
-            "epoch": epoch,
-            "val_loss": val_loss,
-            "special_champion_tokens": SPECIAL_CHAMPION_TOKENS,
-            "train_config": {
-                "champion_loss_weight_power": args.champion_loss_weight_power,
-                "label_smoothing": args.label_smoothing,
-                "coarse_loss_weight": args.coarse_loss_weight,
-                "init_checkpoint": args.init_checkpoint,
-                "finetune_patch": args.finetune_patch,
-                "finetune_historical_ratio": args.finetune_historical_ratio,
-                "train_fraction": args.train_fraction,
-                "eval_fraction": args.eval_fraction,
-                "eval_every_train_batches": args.eval_every_train_batches,
-                "mid_epoch_eval_fraction": args.mid_epoch_eval_fraction,
-                "lr_scheduler": args.lr_scheduler,
-                "lr_scheduler_factor": args.lr_scheduler_factor,
-                "lr_scheduler_patience": args.lr_scheduler_patience,
-                "lr_scheduler_min_lr": args.lr_scheduler_min_lr,
-            },
-        }
-        torch.save(checkpoint, output_dir / "last.pt")
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(checkpoint, output_dir / "best.pt")
+        save_training_checkpoint(
+            torch,
+            model,
+            output_dir=output_dir,
+            model_vocab=model_vocab,
+            model_config=model_config,
+            args=args,
+            epoch=epoch,
+            val_loss=val_loss,
+            best_val_loss_ref=best_val_loss_ref,
+        )
 
     print(f"Saved checkpoints to {output_dir}")
     return 0
@@ -821,6 +798,11 @@ def build_mid_epoch_eval_callback(
     use_hierarchy: bool,
     eval_fraction: float,
     epoch: int,
+    output_dir: Path,
+    model_vocab: dict[str, Any],
+    model_config: dict[str, Any],
+    args: argparse.Namespace,
+    best_val_loss_ref: dict[str, float],
 ):
     def callback(batch_number: int, total_batches: int) -> None:
         val_loss, val_acc, val_top5, val_top10, val_coarse_acc, val_mrr, val_macro_f1 = run_epoch(
@@ -846,8 +828,85 @@ def build_mid_epoch_eval_callback(
             f"val_coarse_acc={val_coarse_acc:.4f} val_mrr={val_mrr:.4f} "
             f"val_macro_f1={val_macro_f1:.4f}"
         )
+        saved_best = save_training_checkpoint(
+            torch,
+            model,
+            output_dir=output_dir,
+            model_vocab=model_vocab,
+            model_config=model_config,
+            args=args,
+            epoch=epoch,
+            val_loss=val_loss,
+            best_val_loss_ref=best_val_loss_ref,
+            checkpoint_source="mid_epoch",
+            train_batch=batch_number,
+            train_batches=total_batches,
+        )
+        best_note = " best" if saved_best else ""
+        print(f"checkpoint source=mid_epoch epoch={epoch:03d} batch={batch_number}/{total_batches} saved=last.pt{best_note}")
 
     return callback
+
+
+def save_training_checkpoint(
+    torch,
+    model,
+    *,
+    output_dir: Path,
+    model_vocab: dict[str, Any],
+    model_config: dict[str, Any],
+    args: argparse.Namespace,
+    epoch: int,
+    val_loss: float,
+    best_val_loss_ref: dict[str, float],
+    checkpoint_source: str = "epoch",
+    train_batch: int | None = None,
+    train_batches: int | None = None,
+) -> bool:
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "model_config": {
+            "shared_vocab_size": model_vocab["shared_vocab_size"],
+            "champion_vocab_size": model_vocab["champion_vocab_size"],
+            "d_model": model_config["d_model"],
+            "num_heads": model_config["num_heads"],
+            "num_layers": model_config["num_layers"],
+            "dim_feedforward": model_config["dim_feedforward"],
+            "dropout": model_config["dropout"],
+            "use_role_heads": bool(model_config.get("use_role_heads", False)),
+            "use_hierarchy": bool(model_config.get("use_hierarchy", False)),
+            "coarse_bucket_size": model_vocab["coarse_bucket_size"],
+        },
+        "model_vocab": model_vocab,
+        "epoch": epoch,
+        "val_loss": val_loss,
+        "checkpoint_source": checkpoint_source,
+        "train_batch": train_batch,
+        "train_batches": train_batches,
+        "special_champion_tokens": SPECIAL_CHAMPION_TOKENS,
+        "train_config": {
+            "champion_loss_weight_power": args.champion_loss_weight_power,
+            "label_smoothing": args.label_smoothing,
+            "coarse_loss_weight": args.coarse_loss_weight,
+            "init_checkpoint": args.init_checkpoint,
+            "finetune_patch": args.finetune_patch,
+            "finetune_historical_ratio": args.finetune_historical_ratio,
+            "train_fraction": args.train_fraction,
+            "eval_fraction": args.eval_fraction,
+            "eval_every_train_batches": args.eval_every_train_batches,
+            "mid_epoch_eval_fraction": args.mid_epoch_eval_fraction,
+            "lr_scheduler": args.lr_scheduler,
+            "lr_scheduler_factor": args.lr_scheduler_factor,
+            "lr_scheduler_patience": args.lr_scheduler_patience,
+            "lr_scheduler_min_lr": args.lr_scheduler_min_lr,
+        },
+    }
+    torch.save(checkpoint, output_dir / "last.pt")
+    if val_loss < best_val_loss_ref["value"]:
+        best_val_loss_ref["value"] = val_loss
+        torch.save(checkpoint, output_dir / "best.pt")
+        return True
+    return False
 
 
 def _topk_hits(logits, target, *, k: int) -> int:
