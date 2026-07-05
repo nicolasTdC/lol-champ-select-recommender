@@ -25,7 +25,11 @@ def main() -> int:
     try:
         platform = args.platform.lower()
         region = args.region or region_for_platform(platform)
-        client = RiotApiClient(api_key=riot_api_key())
+        client = RiotApiClient(
+            api_key=riot_api_key(),
+            request_rate_limit=args.request_rate_limit,
+            request_rate_burst=args.request_rate_burst,
+        )
         entries = collect_ladder_entries(client, args)
     except (RuntimeError, RiotApiError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -241,6 +245,18 @@ def parse_args() -> argparse.Namespace:
         "--download-workers",
         default="auto",
         help="Concurrent match-download workers. Use an integer or 'auto'. Default: auto",
+    )
+    parser.add_argument(
+        "--request-rate-limit",
+        type=float,
+        default=5.0,
+        help="Global Riot request rate limit in requests/sec. Use 0 to disable. Default: 5.0",
+    )
+    parser.add_argument(
+        "--request-rate-burst",
+        type=int,
+        default=2,
+        help="Burst capacity for the request limiter. Default: 2",
     )
     parser.add_argument(
         "--seed",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -50,10 +51,57 @@ class RiotApiError(RuntimeError):
     pass
 
 
+class RequestLimiter:
+    def __init__(self, rate_per_second: float, burst: int = 1) -> None:
+        if rate_per_second <= 0:
+            raise ValueError("rate_per_second must be positive")
+        if burst < 1:
+            raise ValueError("burst must be at least 1")
+        self.rate_per_second = float(rate_per_second)
+        self.burst = int(burst)
+        self._lock = threading.Lock()
+        self._tokens = float(self.burst)
+        self._updated_at = time.monotonic()
+        self._cooldown_until = self._updated_at
+
+    def acquire(self) -> None:
+        while True:
+            wait_seconds = 0.0
+            with self._lock:
+                now = time.monotonic()
+                if now < self._cooldown_until:
+                    wait_seconds = self._cooldown_until - now
+                else:
+                    elapsed = max(0.0, now - self._updated_at)
+                    self._tokens = min(self.burst, self._tokens + elapsed * self.rate_per_second)
+                    self._updated_at = now
+                    if self._tokens >= 1.0:
+                        self._tokens -= 1.0
+                        return
+                    wait_seconds = max(0.0, (1.0 - self._tokens) / self.rate_per_second)
+
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+
+    def backoff(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        with self._lock:
+            self._cooldown_until = max(self._cooldown_until, time.monotonic() + seconds)
+
+
 @dataclass(frozen=True)
 class RiotApiClient:
     api_key: str
     timeout: float = 10.0
+    request_rate_limit: float | None = None
+    request_rate_burst: int = 1
+
+    def __post_init__(self) -> None:
+        limiter = None
+        if self.request_rate_limit is not None and self.request_rate_limit > 0:
+            limiter = RequestLimiter(self.request_rate_limit, self.request_rate_burst)
+        object.__setattr__(self, "_request_limiter", limiter)
 
     def account_by_riot_id(self, game_name: str, tag_line: str, region: str = "americas") -> dict[str, Any]:
         path = (
@@ -215,6 +263,9 @@ class RiotApiClient:
         attempt = 0
         while True:
             try:
+                limiter = getattr(self, "_request_limiter", None)
+                if limiter is not None:
+                    limiter.acquire()
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     body = response.read().decode("utf-8")
                 break
@@ -225,6 +276,9 @@ class RiotApiClient:
 
                 retry_after = _retry_after_seconds(exc.headers.get("Retry-After"))
                 sleep_seconds = max(retry_after, min(30, 2**attempt))
+                limiter = getattr(self, "_request_limiter", None)
+                if limiter is not None:
+                    limiter.backoff(sleep_seconds)
                 time.sleep(sleep_seconds)
                 attempt += 1
             except OSError as exc:
