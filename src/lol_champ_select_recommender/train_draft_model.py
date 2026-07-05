@@ -17,6 +17,7 @@ from .modeling.draft_data import (
     to_int,
 )
 from .modeling.draft_model import MissingTorchError, build_model_class, require_torch
+from .roles import POSITION_ORDER
 
 
 class DraftDataset:
@@ -121,18 +122,21 @@ def main() -> int:
     model = SharedFeatureDraftTransformer(
         shared_vocab_size=model_vocab["shared_vocab_size"],
         champion_vocab_size=model_vocab["champion_vocab_size"],
+        coarse_bucket_size=model_vocab["coarse_bucket_size"],
         d_model=args.d_model,
         num_heads=args.num_heads,
         num_layers=args.num_layers,
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
         use_role_heads=True,
+        use_hierarchy=True,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     criterion = torch.nn.CrossEntropyLoss(
         weight=champion_loss_weights.to(device) if champion_loss_weights is not None else None,
         label_smoothing=args.label_smoothing,
     )
+    coarse_criterion = torch.nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     scheduler = build_lr_scheduler(torch, optimizer, args)
 
     best_val_loss = float("inf")
@@ -145,6 +149,8 @@ def main() -> int:
             batch_size=args.batch_size,
             device=device,
             criterion=criterion,
+            coarse_criterion=coarse_criterion,
+            coarse_loss_weight=args.coarse_loss_weight,
             optimizer=optimizer,
             train=True,
         )
@@ -156,6 +162,8 @@ def main() -> int:
             batch_size=args.batch_size,
             device=device,
             criterion=criterion,
+            coarse_criterion=coarse_criterion,
+            coarse_loss_weight=args.coarse_loss_weight,
             optimizer=None,
             train=False,
         )
@@ -179,6 +187,8 @@ def main() -> int:
                 "dim_feedforward": args.dim_feedforward,
                 "dropout": args.dropout,
                 "use_role_heads": True,
+                "use_hierarchy": True,
+                "coarse_bucket_size": model_vocab["coarse_bucket_size"],
             },
             "model_vocab": model_vocab,
             "epoch": epoch,
@@ -187,6 +197,7 @@ def main() -> int:
             "train_config": {
                 "champion_loss_weight_power": args.champion_loss_weight_power,
                 "label_smoothing": args.label_smoothing,
+                "coarse_loss_weight": args.coarse_loss_weight,
                 "lr_scheduler": args.lr_scheduler,
                 "lr_scheduler_factor": args.lr_scheduler_factor,
                 "lr_scheduler_patience": args.lr_scheduler_patience,
@@ -216,6 +227,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.05,
         help="Cross-entropy label smoothing. Default: 0.05",
+    )
+    parser.add_argument(
+        "--coarse-loss-weight",
+        type=float,
+        default=0.5,
+        help="Auxiliary loss weight for the coarse hierarchy head. Default: 0.5",
     )
     parser.add_argument(
         "--lr-scheduler",
@@ -275,6 +292,8 @@ def run_epoch(
     batch_size: int,
     device,
     criterion,
+    coarse_criterion,
+    coarse_loss_weight: float,
     optimizer,
     train: bool,
 ) -> tuple[float, float]:
@@ -291,12 +310,20 @@ def run_epoch(
         examples = [dataset[index] for index in indices[start : start + batch_size]]
         feature_ids = torch.tensor([example.feature_ids for example in examples], dtype=torch.long, device=device)
         query_index = torch.tensor([example.query_index for example in examples], dtype=torch.long, device=device)
+        role_index = torch.tensor([POSITION_ORDER.index(example.target_role) for example in examples], dtype=torch.long, device=device)
         target = torch.tensor([example.target for example in examples], dtype=torch.long, device=device)
+        target_coarse = torch.tensor([example.target_coarse for example in examples], dtype=torch.long, device=device)
 
         with torch.set_grad_enabled(train):
-            logits = model(feature_ids, query_index)
+            outputs = model(feature_ids, query_index, role_index=role_index, target_coarse_index=target_coarse)
+            if isinstance(outputs, tuple):
+                logits, coarse_logits = outputs
+            else:
+                logits, coarse_logits = outputs, None
             logits[:, : len(SPECIAL_CHAMPION_TOKENS)] = -1e9
             loss = criterion(logits, target)
+            if coarse_logits is not None:
+                loss = loss + coarse_criterion(coarse_logits, target_coarse) * coarse_loss_weight
             if train:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()

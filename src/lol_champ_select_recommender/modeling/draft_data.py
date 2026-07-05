@@ -36,6 +36,7 @@ CHAMPION_CATEGORICAL_FEATURES = ["primary_tag", "secondary_tag", "partype", "ran
 class TrainingExample:
     feature_ids: list[list[int]]
     target: int
+    target_coarse: int
     query_index: int
     target_champion_id: int
     target_role: str
@@ -73,6 +74,19 @@ def build_model_vocab(
     for champion_id in champion_ids:
         champion_token_to_id[str(champion_id)] = len(champion_token_to_id)
     champion_id_to_token_id = {str(champion_id): champion_token_to_id[str(champion_id)] for champion_id in champion_ids}
+    coarse_bucket_values = sorted(
+        {
+            coarse_bucket_value(row)
+            for row in champion_feature_rows
+            if coarse_bucket_value(row)
+        }
+    )
+    coarse_bucket_to_id = {bucket: index for index, bucket in enumerate(coarse_bucket_values)}
+    champion_id_to_coarse_bucket_id = {
+        str(int(row["champion_id"])): coarse_bucket_to_id.get(coarse_bucket_value(row), 0)
+        for row in champion_feature_rows
+        if str(row.get("champion_id", "")).isdigit()
+    }
 
     numeric_feature_names = sorted(
         name
@@ -113,10 +127,13 @@ def build_model_vocab(
         "context_token_count": len(POSITION_ORDER) * 2 + 10,
         "champion_token_to_id": champion_token_to_id,
         "champion_id_to_token_id": champion_id_to_token_id,
+        "coarse_bucket_to_id": coarse_bucket_to_id,
+        "champion_id_to_coarse_bucket_id": champion_id_to_coarse_bucket_id,
         "feature_vocabs": feature_vocabs,
         "feature_offsets": offsets,
         "shared_vocab_size": offset,
         "champion_vocab_size": len(champion_token_to_id),
+        "coarse_bucket_size": len(coarse_bucket_to_id),
         "numeric_feature_names": numeric_feature_names,
         "numeric_bin_edges": numeric_bin_edges,
         "numeric_bins": numeric_bins,
@@ -206,6 +223,7 @@ def build_training_example(
     return TrainingExample(
         feature_ids=feature_ids,
         target=champion_token_id_for_champion(target_champion_id, model_vocab),
+        target_coarse=int(model_vocab["champion_id_to_coarse_bucket_id"][str(target_champion_id)]),
         query_index=query_index,
         target_champion_id=target_champion_id,
         target_role=target_role,
@@ -299,6 +317,14 @@ def vocab_from_tokens(tokens: Any) -> dict[str, int]:
 def category_value(value: Any) -> str:
     token = str(value or "").strip()
     return token if token else NONE_TOKEN
+
+
+def coarse_bucket_value(row: dict[str, Any]) -> str:
+    primary_tag = category_value(row.get("primary_tag"))
+    range_type = category_value(row.get("range_type"))
+    if primary_tag == NONE_TOKEN or range_type == NONE_TOKEN:
+        return ""
+    return f"{primary_tag}|{range_type}"
 
 
 def numeric_bin_token(value: float | None, edges: list[float]) -> str:

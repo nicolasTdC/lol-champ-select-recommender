@@ -97,12 +97,14 @@ class DraftRecommender:
         model = SharedFeatureDraftTransformer(
             shared_vocab_size=model_config["shared_vocab_size"],
             champion_vocab_size=model_config["champion_vocab_size"],
+            coarse_bucket_size=model_config.get("coarse_bucket_size", 0),
             d_model=model_config["d_model"],
             num_heads=model_config["num_heads"],
             num_layers=model_config["num_layers"],
             dim_feedforward=model_config["dim_feedforward"],
             dropout=model_config["dropout"],
             use_role_heads=bool(model_config.get("use_role_heads", False)),
+            use_hierarchy=bool(model_config.get("use_hierarchy", False)),
         )
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
 
@@ -137,9 +139,11 @@ class DraftRecommender:
         device = next(self.model.parameters()).device
         feature_ids = torch.tensor([query.feature_ids for query in queries], dtype=torch.long, device=device)
         query_index = torch.tensor([query.query_index for query in queries], dtype=torch.long, device=device)
+        role_index = torch.tensor([POSITION_ORDER.index(query.role) for query in queries], dtype=torch.long, device=device)
 
         with torch.no_grad():
-            logits = self.model(feature_ids, query_index)
+            outputs = self.model(feature_ids, query_index, role_index=role_index)
+            logits = outputs[0] if isinstance(outputs, tuple) else outputs
 
         token_id_to_champion_id = _token_id_to_champion_id(self.model_vocab)
 

@@ -50,6 +50,7 @@ class DraftModelDataTest(unittest.TestCase):
         query_features = example.feature_ids[example.query_index]
         self.assertEqual(query_features[0], champion_pick_id)
         self.assertEqual(example.target, vocab["champion_id_to_token_id"]["103"])
+        self.assertEqual(example.target_coarse, vocab["champion_id_to_coarse_bucket_id"]["103"])
 
         primary_tag_vocab = vocab["feature_vocabs"]["primary_tag"]
         expected_static_id = vocab["feature_offsets"]["primary_tag"] + primary_tag_vocab.get(
@@ -134,9 +135,39 @@ class DraftModelDataTest(unittest.TestCase):
 
         feature_ids = torch.randint(0, 16, (2, 5, 4))
         query_index = torch.tensor([0, 4])
-        logits = model(feature_ids, query_index)
+        role_index = torch.tensor([0, 4])
+        logits = model(feature_ids, query_index, role_index=role_index)
 
         self.assertEqual(tuple(logits.shape), (2, 6))
+
+    def test_model_can_use_hierarchical_heads(self) -> None:
+        SharedFeatureDraftTransformer = build_model_class()
+        model = SharedFeatureDraftTransformer(
+            shared_vocab_size=16,
+            champion_vocab_size=6,
+            coarse_bucket_size=3,
+            d_model=8,
+            num_heads=1,
+            num_layers=1,
+            dim_feedforward=16,
+            dropout=0.0,
+            use_role_heads=True,
+            use_hierarchy=True,
+        )
+
+        feature_ids = torch.randint(0, 16, (2, 5, 4))
+        query_index = torch.tensor([0, 4])
+        role_index = torch.tensor([0, 4])
+        target_coarse = torch.tensor([1, 2])
+        champion_logits, coarse_logits = model(
+            feature_ids,
+            query_index,
+            role_index=role_index,
+            target_coarse_index=target_coarse,
+        )
+
+        self.assertEqual(tuple(champion_logits.shape), (2, 6))
+        self.assertEqual(tuple(coarse_logits.shape), (2, 3))
 
 
 def sample_draft_row():
