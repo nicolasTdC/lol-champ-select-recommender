@@ -104,6 +104,7 @@ def main() -> int:
     )
 
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
+    print(f"Using {device=}")
     model = SharedFeatureDraftTransformer(
         shared_vocab_size=model_vocab["shared_vocab_size"],
         champion_vocab_size=model_vocab["champion_vocab_size"],
