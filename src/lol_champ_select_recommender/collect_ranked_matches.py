@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import random
 import sys
@@ -52,77 +53,85 @@ def main() -> int:
 
     seen_match_ids = existing_match_ids(matches_dir)
     discovered_match_ids: list[str] = []
+    pending_downloads: list[concurrent.futures.Future[tuple[str, str]]] = []
     downloaded = 0
     skipped_existing = 0
     skipped_duplicate = 0
     player_errors = 0
     match_errors = 0
 
-    for player_index, entry in enumerate(players, start=1):
-        puuid = entry.get("puuid")
-        if not puuid:
-            puuid = resolve_puuid(client, platform, entry)
-        if not puuid:
-            player_errors += 1
-            print(f"[player {player_index:>3}/{len(players)}] missing PUUID; skipped")
-            continue
-
-        try:
-            match_ids = client.match_ids_by_puuid(
-                str(puuid),
-                region,
-                count=args.matches_per_player,
-                queue=args.match_queue,
-                match_type=args.match_type,
-            )
-        except RiotApiError as exc:
-            player_errors += 1
-            print(f"[player {player_index:>3}/{len(players)}] match IDs error: {exc}", file=sys.stderr)
-            sleep(args.sleep)
-            continue
-
-        new_for_player = 0
-        for match_id in match_ids:
-            append_match_source(
-                match_sources_path,
-                match_id=match_id,
-                platform=platform,
-                region=region,
-                queue=args.queue,
-                match_queue=args.match_queue,
-                match_type=args.match_type,
-                entry=entry,
-            )
-
-            if match_id in discovered_match_ids:
-                skipped_duplicate += 1
-                continue
-            discovered_match_ids.append(match_id)
-
-            match_path = matches_dir / f"{match_id}.json"
-            if match_id in seen_match_ids and not args.force:
-                skipped_existing += 1
+    download_workers = max(1, int(args.download_workers))
+    download_executor = concurrent.futures.ThreadPoolExecutor(max_workers=download_workers) if download_workers > 1 else None
+    try:
+        for player_index, entry in enumerate(players, start=1):
+            puuid = entry.get("puuid")
+            if not puuid:
+                puuid = resolve_puuid(client, platform, entry)
+            if not puuid:
+                player_errors += 1
+                print(f"[player {player_index:>3}/{len(players)}] missing PUUID; skipped")
                 continue
 
             try:
-                match = client.match_by_id(match_id, region)
+                match_ids = client.match_ids_by_puuid(
+                    str(puuid),
+                    region,
+                    count=args.matches_per_player,
+                    queue=args.match_queue,
+                    match_type=args.match_type,
+                )
             except RiotApiError as exc:
-                match_errors += 1
-                print(f"  error {match_id}: {exc}", file=sys.stderr)
+                player_errors += 1
+                print(f"[player {player_index:>3}/{len(players)}] match IDs error: {exc}", file=sys.stderr)
                 sleep(args.sleep)
                 continue
 
-            write_json(match_path, match)
-            seen_match_ids.add(match_id)
-            downloaded += 1
-            new_for_player += 1
+            queued_for_player = 0
+            for match_id in match_ids:
+                append_match_source(
+                    match_sources_path,
+                    match_id=match_id,
+                    platform=platform,
+                    region=region,
+                    queue=args.queue,
+                    match_queue=args.match_queue,
+                    match_type=args.match_type,
+                    entry=entry,
+                )
+
+                if match_id in discovered_match_ids:
+                    skipped_duplicate += 1
+                    continue
+                discovered_match_ids.append(match_id)
+
+                match_path = matches_dir / f"{match_id}.json"
+                if match_id in seen_match_ids and not args.force:
+                    skipped_existing += 1
+                    continue
+
+                queued_for_player += 1
+                if download_executor is None:
+                    status, error = download_match(client, match_id, region, match_path, force=args.force)
+                    downloaded, match_errors = update_download_stats(status, error, downloaded, match_errors)
+                    sleep(args.sleep)
+                else:
+                    pending_downloads.append(
+                        download_executor.submit(download_match, client, match_id, region, match_path, args.force)
+                    )
+
+            print(
+                f"[player {player_index:>3}/{len(players)}] "
+                f"{entry_label(entry)} -> {len(match_ids)} ids, {queued_for_player} queued"
+            )
             sleep(args.sleep)
 
-        print(
-            f"[player {player_index:>3}/{len(players)}] "
-            f"{entry_label(entry)} -> {len(match_ids)} ids, {new_for_player} downloaded"
-        )
-        sleep(args.sleep)
+        if download_executor is not None:
+            for future in concurrent.futures.as_completed(pending_downloads):
+                status, error = future.result()
+                downloaded, match_errors = update_download_stats(status, error, downloaded, match_errors)
+    finally:
+        if download_executor is not None:
+            download_executor.shutdown(wait=True, cancel_futures=False)
 
     manifest = {
         "platform": platform,
@@ -221,6 +230,12 @@ def parse_args() -> argparse.Namespace:
         choices=range(1, 101),
         metavar="[1-100]",
         help="Recent matches to request per seed player. Default: 5",
+    )
+    parser.add_argument(
+        "--download-workers",
+        type=int,
+        default=4,
+        help="Concurrent match-download workers. 1 keeps the old sequential behavior. Default: 4",
     )
     parser.add_argument(
         "--seed",
@@ -342,6 +357,43 @@ def existing_match_ids(matches_dir: Path) -> set[str]:
 
 def write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def download_match(
+    client: RiotApiClient,
+    match_id: str,
+    region: str,
+    match_path: Path,
+    force: bool,
+) -> tuple[str, str | None]:
+    if match_path.exists() and not force:
+        return "existing", None
+
+    try:
+        match = client.match_by_id(match_id, region)
+    except RiotApiError as exc:
+        return "error", f"{match_id}: {exc}"
+
+    try:
+        write_json(match_path, match)
+    except OSError as exc:
+        return "error", f"{match_id}: could not write {match_path}: {exc}"
+    return "downloaded", None
+
+
+def update_download_stats(
+    status: str,
+    error: str | None,
+    downloaded: int,
+    match_errors: int,
+) -> tuple[int, int]:
+    if status == "downloaded":
+        return downloaded + 1, match_errors
+    if status == "error":
+        match_errors += 1
+        if error:
+            print(f"  error {error}", file=sys.stderr)
+    return downloaded, match_errors
 
 
 def append_match_source(

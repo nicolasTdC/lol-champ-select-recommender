@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import io
+import json
 import urllib.error
 import urllib.request
 import unittest
 from argparse import Namespace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from lol_champ_select_recommender.collect_ranked_matches import collect_ladder_entries, select_seed_players
+from lol_champ_select_recommender.collect_ranked_matches import collect_ladder_entries, download_match, select_seed_players
 from lol_champ_select_recommender.riot_api import RiotApiClient, RiotApiError, parse_riot_id, region_for_platform
 
 
@@ -89,6 +92,20 @@ class RiotApiTest(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_count, 2)
         mocked_sleep.assert_called()
 
+    def test_download_match_writes_file_and_skips_existing_without_force(self) -> None:
+        client = FakeMatchClient()
+        with TemporaryDirectory() as tmpdir:
+            match_path = Path(tmpdir) / "BR1_1.json"
+
+            status, error = download_match(client, "BR1_1", "americas", match_path, force=False)
+            self.assertEqual((status, error), ("downloaded", None))
+            self.assertEqual(json.loads(match_path.read_text(encoding="utf-8")), {"info": {"gameVersion": "16.13"}})
+            self.assertEqual(client.calls, [("BR1_1", "americas")])
+
+            status, error = download_match(client, "BR1_1", "americas", match_path, force=False)
+            self.assertEqual((status, error), ("existing", None))
+            self.assertEqual(client.calls, [("BR1_1", "americas")])
+
 
 class FakeRiotClient:
     def __init__(self) -> None:
@@ -102,6 +119,15 @@ class FakeRiotClient:
     def league_entries(self, platform: str, *, queue: str, tier: str, division: str, page: int):
         self.standard_calls.append((platform, queue, tier, division, page))
         return [{"puuid": "diamond-puuid"}]
+
+
+class FakeMatchClient:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def match_by_id(self, match_id: str, region: str):
+        self.calls.append((match_id, region))
+        return {"info": {"gameVersion": "16.13"}}
 
 
 class FakeHttpResponse:
