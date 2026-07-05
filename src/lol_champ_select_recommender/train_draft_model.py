@@ -288,7 +288,7 @@ def build_champion_loss_weights(
                 continue
             champion_counts[champion_id] = champion_counts.get(champion_id, 0) + 1
 
-    weights = torch_module.ones(model_vocab["shared_vocab_size"], dtype=torch_module.float32)
+    weights = torch_module.ones(model_vocab["champion_vocab_size"], dtype=torch_module.float32)
     for special_token in SPECIAL_CHAMPION_TOKENS:
         weights[int(model_vocab["champion_token_to_id"][special_token])] = 0.0
 
