@@ -211,11 +211,184 @@ Champion and summoner spell names are resolved from Data Dragon and cached under
 The League Client API is local and can change with League updates. Treat this as a prototype surface and keep the app read-only unless Riot's current policies and API behavior clearly allow a change.
 
 ## QUICK START
+These commands use the current recommended configs from the repo. Replace the Riot IDs, lockfile path, and patch values as needed.
+
+Personal match samples:
+
+```bash
+export RIOT_API_KEY="RGAPI-your-key-here"
+python fetch_matches.py \
+  --riot-id "GameName#TAG" \
+  --region americas \
+  --count 20 \
+  --queue 420 \
+  --match-type ranked \
+  --output-dir data/raw \
+  --force
 ```
-  python collect_ranked_matches.py --platform br1 --tiers EMERALD PLATINUM DIAMOND MASTER GRANDMASTER CHALLENGER --divisions I II III IV --pages 3 --max-players
-  100 --matches-per-player 10 --sleep 0.2
-  python aggregate_matches.py
-  python build_champion_features.py
-  python build_draft_dataset.py
-  python train_draft_model.py --epochs 10 --batch-size 32 --device cuda
+
+You can also pass `--game-name` plus `--tag-line` instead of `--riot-id`.
+
+Player pruning stats:
+
+```bash
+python collect_player_stats.py \
+  --riot-id "GameName#TAG" \
+  --riot-id "Other#TAG" \
+  --region americas \
+  --queue 420 \
+  --match-type ranked \
+  --matches-per-player 100 \
+  --sleep 0.05 \
+  --language en_US \
+  --output data/processed/player_champion_role_stats.csv
+```
+
+Server-level ranked corpus:
+
+```bash
+python collect_ranked_matches.py \
+  --platform br1 \
+  --region americas \
+  --queue RANKED_SOLO_5x5 \
+  --match-queue 420 \
+  --match-type ranked \
+  --tiers DIAMOND MASTER GRANDMASTER CHALLENGER \
+  --divisions I \
+  --pages 30 \
+  --page-mode random \
+  --patch-mode latest \
+  --language en_US \
+  --max-players 500 \
+  --matches-per-player 20 \
+  --download-workers auto \
+  --request-rate-limit 5 \
+  --request-rate-burst 2 \
+  --no-log-rate-limits \
+  --seed 1 \
+  --output-dir data/raw \
+  --force
+```
+
+Aggregate server stats:
+
+```bash
+python aggregate_matches.py \
+  --input-dir data/raw/matches \
+  --output data/processed/champion_role_stats.csv \
+  --priors-output data/processed/champion_role_priors.csv \
+  --language en_US \
+  --include-non-sr
+```
+
+Build champion features:
+
+```bash
+python build_champion_features.py \
+  --language en_US \
+  --output data/processed/champion_features.csv \
+  --vocab-output data/processed/champion_feature_vocab.json
+```
+
+Build the raw draft dataset:
+
+```bash
+python build_draft_dataset.py \
+  --input-dir data/raw/matches \
+  --match-sources data/raw/match_sources.jsonl \
+  --output data/processed/draft_dataset.jsonl \
+  --language en_US \
+  --include-non-sr \
+  --allow-incomplete
+```
+
+Train the baseline model:
+
+```bash
+python train_draft_model.py \
+  --dataset data/processed/draft_dataset.jsonl \
+  --champion-features data/processed/champion_features.csv \
+  --output-dir data/models/draft_transformer \
+  --epochs 50 \
+  --batch-size 16 \
+  --lr 3e-4 \
+  --weight-decay 0.01 \
+  --use-hierarchy \
+  --label-smoothing 0.03 \
+  --coarse-loss-weight 0.3 \
+  --lr-scheduler plateau \
+  --lr-scheduler-factor 0.5 \
+  --lr-scheduler-patience 2 \
+  --lr-scheduler-min-lr 1e-6 \
+  --d-model 128 \
+  --num-heads 1 \
+  --num-layers 4 \
+  --dim-feedforward 512 \
+  --dropout 0.1 \
+  --mask-probability 0.25 \
+  --unk-probability 0.03 \
+  --numeric-bins 10 \
+  --val-split 0.15 \
+  --champion-loss-weight-power 0.35 \
+  --train-examples-per-row 4 \
+  --seed 1 \
+  --device cuda
+```
+
+Fine-tune on the latest patch while keeping some historical replay:
+
+```bash
+python train_draft_model.py \
+  --dataset data/processed/draft_dataset.jsonl \
+  --champion-features data/processed/champion_features.csv \
+  --output-dir data/models/draft_transformer_finetune \
+  --init-checkpoint data/models/draft_transformer/best.pt \
+  --finetune-patch PATCH_VERSION \
+  --finetune-historical-ratio 0.2 \
+  --epochs 20 \
+  --batch-size 16 \
+  --lr 1e-4 \
+  --weight-decay 0.01 \
+  --use-hierarchy \
+  --label-smoothing 0.03 \
+  --coarse-loss-weight 0.3 \
+  --lr-scheduler plateau \
+  --lr-scheduler-factor 0.5 \
+  --lr-scheduler-patience 2 \
+  --lr-scheduler-min-lr 1e-6 \
+  --d-model 128 \
+  --num-heads 1 \
+  --num-layers 4 \
+  --dim-feedforward 512 \
+  --dropout 0.1 \
+  --mask-probability 0.25 \
+  --unk-probability 0.03 \
+  --numeric-bins 10 \
+  --val-split 0.15 \
+  --champion-loss-weight-power 0.35 \
+  --train-examples-per-row 4 \
+  --seed 1 \
+  --device cuda
+```
+
+Live terminal inference:
+
+```bash
+python watch.py \
+  --lockfile "/mnt/c/Riot Games/League of Legends/lockfile" \
+  --host 127.0.0.1 \
+  --interval 0.5 \
+  --language en_US \
+  --once \
+  --no-clear \
+  --role-priors data/processed/champion_role_priors.csv \
+  --role-priors-queue 420 \
+  --role-priors-patch PATCH_VERSION \
+  --role-priors-min-games 1 \
+  --model-checkpoint data/models/draft_transformer/best.pt \
+  --champion-features data/processed/champion_features.csv \
+  --recommendation-count 10 \
+  --player-stats data/processed/player_champion_role_stats.csv \
+  --champion-blacklist data/processed/champion_blacklist.txt \
+  --debug-inference
 ```
