@@ -287,6 +287,10 @@ class DraftInferenceTest(unittest.TestCase):
                 hard=[DraftPickRecommendation(champion_id=2, score=0.8)],
                 extrapolated_soft=[DraftPickRecommendation(champion_id=1, score=0.9)],
                 extrapolated_hard=[DraftPickRecommendation(champion_id=2, score=1.0)],
+                whitelisted_soft=None,
+                whitelisted_hard=None,
+                whitelisted_extrapolated_soft=None,
+                whitelisted_extrapolated_hard=None,
             )
         ]
 
@@ -299,6 +303,40 @@ class DraftInferenceTest(unittest.TestCase):
         self.assertIn("    Hard: Olaf 80%", lines)
         self.assertIn("    Extrapolated Soft: Annie 90%", lines)
         self.assertIn("    Extrapolated Hard: Olaf 100%", lines)
+        self.assertIn("    Whitelisted Soft: unavailable", lines)
+        self.assertIn("    Whitelisted Hard: unavailable", lines)
+
+    def test_recommend_lines_show_whitelisted_views(self) -> None:
+        static_data = StaticData(
+            version="test",
+            champions={1: "Annie", 2: "Olaf", 3: "Galio"},
+            summoner_spells={},
+            champion_keys={1: "Annie", 2: "Olaf", 3: "Galio"},
+        )
+        recommender = object.__new__(DraftRecommender)
+        recommender.champion_blacklist = {2}
+        recommender.recommend = lambda *args, **kwargs: [  # type: ignore[assignment]
+            DraftRoleRecommendation(
+                role="top",
+                raw=[
+                    DraftPickRecommendation(champion_id=1, score=0.6),
+                    DraftPickRecommendation(champion_id=2, score=0.3),
+                ],
+                soft=[DraftPickRecommendation(champion_id=1, score=0.7), DraftPickRecommendation(champion_id=2, score=0.2)],
+                hard=[DraftPickRecommendation(champion_id=2, score=0.8)],
+                extrapolated_soft=[DraftPickRecommendation(champion_id=1, score=0.9)],
+                extrapolated_hard=[DraftPickRecommendation(champion_id=2, score=1.0)],
+                whitelisted_soft=[DraftPickRecommendation(champion_id=1, score=1.0)],
+                whitelisted_hard=[],
+                whitelisted_extrapolated_soft=[DraftPickRecommendation(champion_id=1, score=1.0)],
+                whitelisted_extrapolated_hard=[],
+            )
+        ]
+
+        lines = recommender.recommend_lines({}, static_data)
+
+        self.assertIn("    Whitelisted Soft: Annie 100%", lines)
+        self.assertIn("    Whitelisted Hard: ", "\n".join(lines))
 
 
 if __name__ == "__main__":

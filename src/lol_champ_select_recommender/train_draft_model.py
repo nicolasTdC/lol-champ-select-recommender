@@ -116,7 +116,6 @@ def main() -> int:
         power=args.champion_loss_weight_power,
         torch_module=torch,
     )
-
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Using {device=}")
     model = SharedFeatureDraftTransformer(
@@ -129,7 +128,7 @@ def main() -> int:
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
         use_role_heads=True,
-        use_hierarchy=True,
+        use_hierarchy=args.use_hierarchy,
     ).to(device)
     print(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -143,7 +142,7 @@ def main() -> int:
     best_val_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
         train_dataset.set_epoch(epoch)
-        train_loss, train_acc, train_top5, train_top10, train_coarse_acc = run_epoch(
+        train_loss, train_acc, train_top5, train_top10, train_coarse_acc, train_mrr, train_macro_f1 = run_epoch(
             torch,
             model,
             train_dataset,
@@ -153,11 +152,12 @@ def main() -> int:
             coarse_criterion=coarse_criterion,
             coarse_loss_weight=args.coarse_loss_weight,
             use_teacher_forcing_coarse=True,
+            use_hierarchy=args.use_hierarchy,
             optimizer=optimizer,
             train=True,
         )
         val_dataset.set_epoch(epoch)
-        val_loss, val_acc, val_top5, val_top10, val_coarse_acc = run_epoch(
+        val_loss, val_acc, val_top5, val_top10, val_coarse_acc, val_mrr, val_macro_f1 = run_epoch(
             torch,
             model,
             val_dataset,
@@ -167,6 +167,7 @@ def main() -> int:
             coarse_criterion=coarse_criterion,
             coarse_loss_weight=args.coarse_loss_weight,
             use_teacher_forcing_coarse=False,
+            use_hierarchy=args.use_hierarchy,
             optimizer=None,
             train=False,
         )
@@ -174,10 +175,10 @@ def main() -> int:
             f"epoch {epoch:03d} "
             f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
             f"train_top5={train_top5:.4f} train_top10={train_top10:.4f} "
-            f"train_coarse_acc={train_coarse_acc:.4f} "
+            f"train_coarse_acc={train_coarse_acc:.4f} train_mrr={train_mrr:.4f} train_macro_f1={train_macro_f1:.4f} "
             f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} "
             f"val_top5={val_top5:.4f} val_top10={val_top10:.4f} "
-            f"val_coarse_acc={val_coarse_acc:.4f} "
+            f"val_coarse_acc={val_coarse_acc:.4f} val_mrr={val_mrr:.4f} val_macro_f1={val_macro_f1:.4f} "
             f"lr={optimizer.param_groups[0]['lr']:.2e}"
         )
         if scheduler is not None:
@@ -194,7 +195,7 @@ def main() -> int:
                 "dim_feedforward": args.dim_feedforward,
                 "dropout": args.dropout,
                 "use_role_heads": True,
-                "use_hierarchy": True,
+                "use_hierarchy": args.use_hierarchy,
                 "coarse_bucket_size": model_vocab["coarse_bucket_size"],
             },
             "model_vocab": model_vocab,
@@ -229,6 +230,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument(
+        "--use-hierarchy",
+        dest="use_hierarchy",
+        action="store_true",
+        help="Enable the auxiliary coarse hierarchy head. Default: on",
+    )
+    parser.add_argument(
+        "--no-hierarchy",
+        dest="use_hierarchy",
+        action="store_false",
+        help="Disable the auxiliary coarse hierarchy head.",
+    )
+    parser.set_defaults(use_hierarchy=True)
     parser.add_argument(
         "--label-smoothing",
         type=float,
@@ -302,16 +316,21 @@ def run_epoch(
     coarse_criterion,
     coarse_loss_weight: float,
     use_teacher_forcing_coarse: bool,
+    use_hierarchy: bool,
     optimizer,
     train: bool,
-) -> tuple[float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float]:
     model.train(train)
     total_loss = 0.0
     total_correct = 0
     total_top5 = 0
     total_top10 = 0
+    total_mrr = 0.0
     total_coarse_correct = 0
     total_examples = 0
+    label_counts: dict[int, int] = {}
+    pred_counts: dict[int, int] = {}
+    true_positive_counts: dict[int, int] = {}
 
     indices = list(range(len(dataset)))
     if train:
@@ -327,7 +346,15 @@ def run_epoch(
         coarse_context_target = target_coarse if use_teacher_forcing_coarse else None
 
         with torch.set_grad_enabled(train):
-            outputs = model(feature_ids, query_index, role_index=role_index, target_coarse_index=coarse_context_target)
+            if use_hierarchy:
+                outputs = model(
+                    feature_ids,
+                    query_index,
+                    role_index=role_index,
+                    target_coarse_index=coarse_context_target,
+                )
+            else:
+                outputs = model(feature_ids, query_index, role_index=role_index)
             if isinstance(outputs, tuple):
                 logits, coarse_logits = outputs
             else:
@@ -345,21 +372,22 @@ def run_epoch(
         total_correct += int((predictions == target).sum().item())
         total_top5 += _topk_hits(logits, target, k=5)
         total_top10 += _topk_hits(logits, target, k=10)
+        total_mrr += _mean_reciprocal_rank(logits, target)
         if coarse_logits is not None:
             coarse_predictions = coarse_logits.argmax(dim=1)
             total_coarse_correct += int((coarse_predictions == target_coarse).sum().item())
+        for target_id, pred_id in zip(target.tolist(), predictions.tolist()):
+            label_counts[target_id] = label_counts.get(target_id, 0) + 1
+            pred_counts[pred_id] = pred_counts.get(pred_id, 0) + 1
+            if target_id == pred_id:
+                true_positive_counts[target_id] = true_positive_counts.get(target_id, 0) + 1
         total_loss += float(loss.item()) * len(examples)
         total_examples += len(examples)
 
+    macro_f1 = _macro_f1(label_counts, pred_counts, true_positive_counts)
     if total_examples == 0:
-        return 0.0, 0.0, 0.0, 0.0, 0.0
-    return (
-        total_loss / total_examples,
-        total_correct / total_examples,
-        total_top5 / total_examples,
-        total_top10 / total_examples,
-        total_coarse_correct / total_examples,
-    )
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    return total_loss / total_examples, total_correct / total_examples, total_top5 / total_examples, total_top10 / total_examples, total_coarse_correct / total_examples, total_mrr / total_examples, macro_f1
 
 
 def _topk_hits(logits, target, *, k: int) -> int:
@@ -368,6 +396,35 @@ def _topk_hits(logits, target, *, k: int) -> int:
     k = min(k, logits.size(1))
     _, topk = logits.topk(k, dim=1)
     return int((topk == target.unsqueeze(1)).any(dim=1).sum().item())
+
+
+def _mean_reciprocal_rank(logits, target) -> float:
+    if logits.numel() == 0:
+        return 0.0
+    rankings = logits.argsort(dim=1, descending=True)
+    hits = rankings.eq(target.unsqueeze(1))
+    ranks = hits.float().argmax(dim=1) + 1
+    reciprocal_ranks = 1.0 / ranks.float()
+    return float(reciprocal_ranks.sum().item())
+
+
+def _macro_f1(
+    label_counts: dict[int, int],
+    pred_counts: dict[int, int],
+    true_positive_counts: dict[int, int],
+) -> float:
+    labels = set(label_counts) | set(pred_counts)
+    if not labels:
+        return 0.0
+
+    scores: list[float] = []
+    for label in labels:
+        tp = true_positive_counts.get(label, 0)
+        fp = pred_counts.get(label, 0) - tp
+        fn = label_counts.get(label, 0) - tp
+        denom = (2 * tp) + fp + fn
+        scores.append((2 * tp / denom) if denom > 0 else 0.0)
+    return sum(scores) / len(scores)
 
 
 def build_champion_loss_weights(

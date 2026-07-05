@@ -40,6 +40,10 @@ class DraftRoleRecommendation:
     hard: list[DraftPickRecommendation] | None
     extrapolated_soft: list[DraftPickRecommendation] | None
     extrapolated_hard: list[DraftPickRecommendation] | None
+    whitelisted_soft: list[DraftPickRecommendation] | None
+    whitelisted_hard: list[DraftPickRecommendation] | None
+    whitelisted_extrapolated_soft: list[DraftPickRecommendation] | None
+    whitelisted_extrapolated_hard: list[DraftPickRecommendation] | None
 
     @property
     def role_label(self) -> str:
@@ -69,12 +73,14 @@ class DraftRecommender:
         champion_features: dict[int, dict[str, Any]],
         torch_module,
         player_prune_index: PlayerPruneIndex | None = None,
+        champion_blacklist: set[int] | None = None,
     ) -> None:
         self.model = model
         self.model_vocab = model_vocab
         self.champion_features = champion_features
         self._torch = torch_module
         self.player_prune_index = player_prune_index
+        self.champion_blacklist = champion_blacklist or set()
 
     @classmethod
     def load(
@@ -83,6 +89,7 @@ class DraftRecommender:
         *,
         champion_features_path: str | Path = "data/processed/champion_features.csv",
         player_stats_path: str | Path | None = None,
+        champion_blacklist_path: str | Path | None = None,
         device: str | None = None,
     ) -> DraftRecommender:
         torch, _nn = require_torch()
@@ -92,6 +99,9 @@ class DraftRecommender:
         champion_rows = load_champion_feature_rows(champion_features_path)
         champion_features = champion_features_by_id(champion_rows)
         player_prune_index = load_player_prune_index(player_stats_path) if player_stats_path else None
+        champion_blacklist = (
+            load_champion_blacklist(champion_blacklist_path, champion_features) if champion_blacklist_path else set()
+        )
 
         SharedFeatureDraftTransformer = build_model_class()
         model = SharedFeatureDraftTransformer(
@@ -113,7 +123,7 @@ class DraftRecommender:
         model.eval()
         print(model)
 
-        return cls(model, model_vocab, champion_features, torch, player_prune_index)
+        return cls(model, model_vocab, champion_features, torch, player_prune_index, champion_blacklist)
 
     def recommend(
         self,
@@ -171,6 +181,10 @@ class DraftRecommender:
                 hard = None
                 extrapolated_soft = None
                 extrapolated_hard = None
+                whitelisted_soft = None
+                whitelisted_hard = None
+                whitelisted_extrapolated_soft = None
+                whitelisted_extrapolated_hard = None
             else:
                 soft_candidates = soft_prune_candidates(
                     [champion_id for champion_id, _score in ranked_candidates],
@@ -216,6 +230,51 @@ class DraftRecommender:
                     top_k=top_k,
                     torch_module=torch,
                 )
+                if self.champion_blacklist:
+                    whitelist_candidates = [
+                        champion_id for champion_id, _score in ranked_candidates if champion_id not in self.champion_blacklist
+                    ]
+                    whitelisted_soft = _score_ranked_candidates(
+                        [
+                            (champion_id, _candidate_score(ranked_candidates, champion_id))
+                            for champion_id in whitelist_candidates
+                            if champion_id in soft_candidates
+                        ],
+                        top_k=top_k,
+                        torch_module=torch,
+                    )
+                    whitelisted_hard = _score_ranked_candidates(
+                        [
+                            (champion_id, _candidate_score(ranked_candidates, champion_id))
+                            for champion_id in whitelist_candidates
+                            if champion_id in hard_candidates
+                        ],
+                        top_k=top_k,
+                        torch_module=torch,
+                    )
+                    whitelisted_extrapolated_soft = _score_ranked_candidates(
+                        [
+                            (champion_id, _candidate_score(ranked_candidates, champion_id))
+                            for champion_id in whitelist_candidates
+                            if champion_id in extrapolated_soft_candidates
+                        ],
+                        top_k=top_k,
+                        torch_module=torch,
+                    )
+                    whitelisted_extrapolated_hard = _score_ranked_candidates(
+                        [
+                            (champion_id, _candidate_score(ranked_candidates, champion_id))
+                            for champion_id in whitelist_candidates
+                            if champion_id in extrapolated_hard_candidates
+                        ],
+                        top_k=top_k,
+                        torch_module=torch,
+                    )
+                else:
+                    whitelisted_soft = None
+                    whitelisted_hard = None
+                    whitelisted_extrapolated_soft = None
+                    whitelisted_extrapolated_hard = None
 
             if raw:
                 recommendations.append(
@@ -226,6 +285,10 @@ class DraftRecommender:
                         hard=hard,
                         extrapolated_soft=extrapolated_soft,
                         extrapolated_hard=extrapolated_hard,
+                        whitelisted_soft=whitelisted_soft,
+                        whitelisted_hard=whitelisted_hard,
+                        whitelisted_extrapolated_soft=whitelisted_extrapolated_soft,
+                        whitelisted_extrapolated_hard=whitelisted_extrapolated_hard,
                     )
                 )
 
@@ -292,12 +355,41 @@ class DraftRecommender:
                 lines.append(
                     f"    Extrapolated Hard: {_format_pick_list(recommendation.extrapolated_hard, static_data)}"
                 )
+            if recommendation.whitelisted_soft is None:
+                lines.append("    Whitelisted Soft: unavailable")
+            else:
+                lines.append(f"    Whitelisted Soft: {_format_pick_list(recommendation.whitelisted_soft, static_data)}")
+            if recommendation.whitelisted_hard is None:
+                lines.append("    Whitelisted Hard: unavailable")
+            else:
+                lines.append(f"    Whitelisted Hard: {_format_pick_list(recommendation.whitelisted_hard, static_data)}")
+            if recommendation.whitelisted_extrapolated_soft is None:
+                lines.append("    Whitelisted Extrapolated Soft: unavailable")
+            else:
+                lines.append(
+                    "    Whitelisted Extrapolated Soft: "
+                    f"{_format_pick_list(recommendation.whitelisted_extrapolated_soft, static_data)}"
+                )
+            if recommendation.whitelisted_extrapolated_hard is None:
+                lines.append("    Whitelisted Extrapolated Hard: unavailable")
+            else:
+                lines.append(
+                    "    Whitelisted Extrapolated Hard: "
+                    f"{_format_pick_list(recommendation.whitelisted_extrapolated_hard, static_data)}"
+                )
         return lines
 
     def prune_status(self) -> str:
         if self.player_prune_index is None:
-            return "unavailable"
-        return f"loaded {self.player_prune_index.source}"
+            player_status = "unavailable"
+        else:
+            player_status = f"loaded {self.player_prune_index.source}"
+        parts: list[str] = [player_status]
+        if self.champion_blacklist:
+            parts.append(f"blacklist: {len(self.champion_blacklist)} champs")
+        else:
+            parts.append("blacklist: unavailable")
+        return " | ".join(parts)
 
 
 def build_live_queries(
@@ -502,6 +594,47 @@ def _token_id_to_champion_id(model_vocab: dict[str, Any]) -> dict[int, int]:
         if str(champion_token).isdigit():
             result[int(token_id)] = int(champion_token)
     return result
+
+
+def load_champion_blacklist(
+    path: str | Path,
+    champion_features: dict[int, dict[str, Any]],
+) -> set[int]:
+    blacklist_path = Path(path)
+    if not blacklist_path.is_file():
+        return set()
+
+    champion_lookup: dict[str, int] = {}
+    for champion_id, features in champion_features.items():
+        for key in ("champion_name", "champion_key"):
+            value = str(features.get(key, "")).strip().lower()
+            if value:
+                champion_lookup[value] = champion_id
+
+    blocked: set[int] = set()
+    try:
+        lines = blacklist_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+
+    for line in lines:
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        for token in entry.replace(",", " ").split():
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                blocked.add(int(token))
+                continue
+            except ValueError:
+                pass
+            matched = champion_lookup.get(token.lower())
+            if matched is not None:
+                blocked.add(matched)
+
+    return blocked
 
 
 def _score_ranked_candidates(

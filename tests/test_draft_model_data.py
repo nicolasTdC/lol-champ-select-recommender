@@ -9,6 +9,8 @@ import torch
 from lol_champ_select_recommender.train_draft_model import DraftDataset
 from lol_champ_select_recommender.train_draft_model import build_champion_loss_weights
 from lol_champ_select_recommender.train_draft_model import build_lr_scheduler
+from lol_champ_select_recommender.train_draft_model import _macro_f1
+from lol_champ_select_recommender.train_draft_model import _mean_reciprocal_rank
 from lol_champ_select_recommender.train_draft_model import _topk_hits
 from lol_champ_select_recommender.modeling.draft_model import build_model_class
 from lol_champ_select_recommender.modeling.draft_data import (
@@ -183,12 +185,28 @@ class DraftModelDataTest(unittest.TestCase):
         self.assertEqual(tuple(champion_logits.shape), (2, 6))
         self.assertEqual(tuple(coarse_logits.shape), (2, 3))
 
+        champion_logits_pred, coarse_logits_pred = model(
+            feature_ids,
+            query_index,
+            role_index=role_index,
+        )
+
+        self.assertEqual(tuple(champion_logits_pred.shape), (2, 6))
+        self.assertEqual(tuple(coarse_logits_pred.shape), (2, 3))
+
     def test_topk_hits_counts_membership(self) -> None:
         logits = torch.tensor([[0.1, 0.9, 0.2], [0.7, 0.1, 0.2]])
         target = torch.tensor([1, 2])
 
         self.assertEqual(_topk_hits(logits, target, k=1), 1)
         self.assertEqual(_topk_hits(logits, target, k=2), 2)
+
+    def test_ranking_metrics(self) -> None:
+        logits = torch.tensor([[0.1, 0.9, 0.2], [0.7, 0.1, 0.2]])
+        target = torch.tensor([1, 2])
+
+        self.assertAlmostEqual(_mean_reciprocal_rank(logits, target), 1.5)
+        self.assertAlmostEqual(_macro_f1({1: 1, 2: 1}, {1: 1, 0: 1}, {1: 1},), 1 / 3)
 
 
 def sample_draft_row():

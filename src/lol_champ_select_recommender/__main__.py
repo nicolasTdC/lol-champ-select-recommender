@@ -154,6 +154,11 @@ def parse_args() -> argparse.Namespace:
         help="Per-player champion-role stats CSV for heuristic pruning. Default: data/processed/player_champion_role_stats.csv",
     )
     parser.add_argument(
+        "--champion-blacklist",
+        default="data/processed/champion_blacklist.txt",
+        help="Text file with champion IDs or names to exclude from whitelisted pruning views. Default: data/processed/champion_blacklist.txt",
+    )
+    parser.add_argument(
         "--debug-inference",
         action="store_true",
         help="Print the live inference token sequence and decoded feature values.",
@@ -187,6 +192,7 @@ def load_recommender(args: argparse.Namespace) -> tuple[DraftRecommender | None,
                 checkpoint,
                 champion_features_path=args.champion_features,
                 player_stats_path=args.player_stats,
+                champion_blacklist_path=args.champion_blacklist,
             )
         except Exception as exc:  # noqa: BLE001
             return None, f"unavailable ({checkpoint}: {exc})"

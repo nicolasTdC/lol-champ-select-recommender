@@ -54,20 +54,24 @@ def build_model_class():
             self.use_hierarchy = use_hierarchy and coarse_bucket_size > 0
             if self.use_hierarchy:
                 self.role_outputs = nn.ModuleDict(
-                    {role: nn.Linear(d_model * 2, champion_vocab_size) for role in POSITION_ORDER}
+                    {role: nn.Linear(d_model, champion_vocab_size) for role in POSITION_ORDER}
                 )
                 self.role_coarse_outputs = nn.ModuleDict(
                     {role: nn.Linear(d_model, coarse_bucket_size) for role in POSITION_ORDER}
                 )
-                self.coarse_embedding = nn.Embedding(coarse_bucket_size, d_model)
             else:
                 self.role_outputs = nn.ModuleDict(
                     {role: nn.Linear(d_model, champion_vocab_size) for role in POSITION_ORDER}
                 )
                 self.role_coarse_outputs = None
-                self.coarse_embedding = None
 
-        def forward(self, feature_ids, query_index, role_index=None, target_coarse_index=None):
+        def forward(
+            self,
+            feature_ids,
+            query_index,
+            role_index=None,
+            target_coarse_index=None,
+        ):
             embedded = self.embedding(feature_ids).sum(dim=2)
             encoded = self.encoder(embedded)
             batch_index = torch.arange(encoded.size(0), device=encoded.device)
@@ -82,13 +86,7 @@ def build_model_class():
                     role = POSITION_ORDER[int(role_bucket_index)]
                     role_coarse_logits = self.role_coarse_outputs[role](hidden[row_index])
                     coarse_logits.append(role_coarse_logits)
-                    if target_coarse_index is not None:
-                        coarse_context = self.coarse_embedding(target_coarse_index[row_index])
-                    else:
-                        coarse_probs = torch.softmax(role_coarse_logits, dim=-1)
-                        coarse_context = coarse_probs @ self.coarse_embedding.weight
-                    champion_input = torch.cat([hidden[row_index], coarse_context], dim=-1)
-                    champion_logits.append(self.role_outputs[role](champion_input))
+                    champion_logits.append(self.role_outputs[role](hidden[row_index]))
                 return torch.stack(champion_logits, dim=0), torch.stack(coarse_logits, dim=0)
 
             if not self.use_role_heads:
