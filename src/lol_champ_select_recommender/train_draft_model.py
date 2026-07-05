@@ -14,6 +14,8 @@ from .modeling.draft_data import (
     champion_features_by_id,
     load_champion_feature_rows,
     load_jsonl,
+    numeric_bin_token,
+    to_float,
     to_int,
 )
 from .modeling.draft_model import MissingTorchError, build_model_class, require_torch
@@ -184,7 +186,13 @@ def main() -> int:
         use_hierarchy=bool(model_config.get("use_hierarchy", False)),
     ).to(device)
     if checkpoint is not None:
-        load_finetune_checkpoint(model, checkpoint["model_state_dict"], checkpoint["model_vocab"], model_vocab)
+        load_finetune_checkpoint(
+            model,
+            checkpoint["model_state_dict"],
+            checkpoint["model_vocab"],
+            model_vocab,
+            champion_features,
+        )
         print(f"Loaded checkpoint from {args.init_checkpoint} with vocab expansion")
     print(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -397,7 +405,13 @@ def filter_rows_for_finetuning(
     return filtered_rows
 
 
-def load_finetune_checkpoint(model, checkpoint_state_dict: dict[str, Any], checkpoint_vocab: dict[str, Any], model_vocab: dict[str, Any]) -> None:
+def load_finetune_checkpoint(
+    model,
+    checkpoint_state_dict: dict[str, Any],
+    checkpoint_vocab: dict[str, Any],
+    model_vocab: dict[str, Any],
+    champion_features: dict[int, dict[str, Any]],
+) -> None:
     current_state = model.state_dict()
     updated_state = dict(current_state)
 
@@ -416,7 +430,150 @@ def load_finetune_checkpoint(model, checkpoint_state_dict: dict[str, Any], check
         if target.shape == value.shape:
             updated_state[key] = value
 
+    initialize_new_champion_rows(
+        updated_state,
+        checkpoint_vocab=checkpoint_vocab,
+        model_vocab=model_vocab,
+        champion_features=champion_features,
+    )
     model.load_state_dict(updated_state, strict=True)
+
+
+def initialize_new_champion_rows(
+    state_dict: dict[str, Any],
+    *,
+    checkpoint_vocab: dict[str, Any],
+    model_vocab: dict[str, Any],
+    champion_features: dict[int, dict[str, Any]],
+) -> None:
+    old_champion_ids = {int(champion_id) for champion_id in checkpoint_vocab["champion_id_to_token_id"].keys()}
+    current_champion_ids = {int(champion_id) for champion_id in model_vocab["champion_id_to_token_id"].keys()}
+    new_champion_ids = sorted(current_champion_ids - old_champion_ids)
+    if not new_champion_ids:
+        return
+
+    champion_offset = int(model_vocab["feature_offsets"]["champion"])
+    current_champion_tokens = model_vocab["feature_vocabs"]["champion"]
+    current_output_rows = model_vocab["champion_id_to_token_id"]
+
+    for champion_id in new_champion_ids:
+        source_ids = similar_champion_ids(champion_id, checkpoint_vocab, model_vocab, champion_features)
+        if not source_ids:
+            source_ids = sorted(old_champion_ids)
+        if not source_ids:
+            continue
+
+        source_embedding_indices = [
+            champion_offset + int(current_champion_tokens[str(source_id)])
+            for source_id in source_ids
+            if str(source_id) in current_champion_tokens
+        ]
+        if source_embedding_indices:
+            state_dict["embedding.weight"][champion_offset + int(current_champion_tokens[str(champion_id)])] = weighted_mean_rows(
+                state_dict["embedding.weight"],
+                source_embedding_indices,
+            )
+
+        target_output_index = int(current_output_rows[str(champion_id)])
+        source_output_indices = [
+            int(current_output_rows[str(source_id)])
+            for source_id in source_ids
+            if str(source_id) in current_output_rows
+        ]
+        if source_output_indices:
+            state_dict["output.weight"][target_output_index] = weighted_mean_rows(
+                state_dict["output.weight"],
+                source_output_indices,
+            )
+            state_dict["output.bias"][target_output_index] = weighted_mean_rows(
+                state_dict["output.bias"].unsqueeze(1),
+                source_output_indices,
+            ).squeeze(0)
+            for role in POSITION_ORDER:
+                role_weight_key = f"role_outputs.{role}.weight"
+                role_bias_key = f"role_outputs.{role}.bias"
+                state_dict[role_weight_key][target_output_index] = weighted_mean_rows(
+                    state_dict[role_weight_key],
+                    source_output_indices,
+                )
+                state_dict[role_bias_key][target_output_index] = weighted_mean_rows(
+                    state_dict[role_bias_key].unsqueeze(1),
+                    source_output_indices,
+                ).squeeze(0)
+                coarse_weight_key = f"role_coarse_outputs.{role}.weight"
+                coarse_bias_key = f"role_coarse_outputs.{role}.bias"
+                if coarse_weight_key in state_dict and coarse_bias_key in state_dict:
+                    state_dict[coarse_weight_key][target_output_index] = weighted_mean_rows(
+                        state_dict[coarse_weight_key],
+                        source_output_indices,
+                    )
+                    state_dict[coarse_bias_key][target_output_index] = weighted_mean_rows(
+                        state_dict[coarse_bias_key].unsqueeze(1),
+                        source_output_indices,
+                    ).squeeze(0)
+
+
+def similar_champion_ids(
+    champion_id: int,
+    checkpoint_vocab: dict[str, Any],
+    model_vocab: dict[str, Any],
+    champion_features: dict[int, dict[str, Any]],
+) -> list[int]:
+    target_row = champion_features.get(champion_id)
+    if not target_row:
+        return []
+
+    current_ids = [int(champion_id_str) for champion_id_str in checkpoint_vocab["champion_id_to_token_id"].keys()]
+    scored: list[tuple[float, int]] = []
+    for candidate_id in current_ids:
+        candidate_row = champion_features.get(candidate_id)
+        if not candidate_row:
+            continue
+        score = champion_similarity_score(target_row, candidate_row, model_vocab)
+        scored.append((score, candidate_id))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    positive = [champion_id for score, champion_id in scored if score > 0]
+    if positive:
+        return positive[: min(5, len(positive))]
+    return [champion_id for _score, champion_id in scored[: min(5, len(scored))]]
+
+
+def champion_similarity_score(
+    target_row: dict[str, Any],
+    candidate_row: dict[str, Any],
+    model_vocab: dict[str, Any],
+) -> float:
+    score = 0.0
+    categorical_weights = {
+        "primary_tag": 4.0,
+        "secondary_tag": 3.0,
+        "partype": 2.0,
+        "range_type": 4.0,
+    }
+    for feature_name, weight in categorical_weights.items():
+        if normalized_feature_value(target_row.get(feature_name)) == normalized_feature_value(candidate_row.get(feature_name)):
+            score += weight
+
+    for feature_name in model_vocab["numeric_feature_names"]:
+        edges = model_vocab["numeric_bin_edges"].get(feature_name, [])
+        target_bin = numeric_bin_token(to_float(target_row.get(feature_name)), edges)
+        candidate_bin = numeric_bin_token(to_float(candidate_row.get(feature_name)), edges)
+        if target_bin == candidate_bin:
+            score += 1.0
+
+    return score
+
+
+def normalized_feature_value(value: Any) -> str:
+    token = str(value or "").strip()
+    return token if token else "<NONE>"
+
+
+def weighted_mean_rows(matrix, row_indices: list[int]):
+    if not row_indices:
+        raise ValueError("weighted_mean_rows requires at least one row index")
+    return matrix[row_indices].mean(dim=0)
 
 
 def remap_embedding_weights(

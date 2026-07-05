@@ -257,15 +257,16 @@ class DraftModelDataTest(unittest.TestCase):
     def test_finetune_checkpoint_keeps_old_weights_and_initializes_new_champion(self) -> None:
         SharedFeatureDraftTransformer = build_model_class()
         old_feature_rows = [
-            feature_row(82, "Mordekaiser", "Fighter", "Mage", 175, 8, 5, 6, 7),
-            feature_row(103, "Ahri", "Mage", "Assassin", 550, 3, 4, 8, 5),
+            feature_row(82, "Mordekaiser", "Mage", "Support", 550, 8, 5, 6, 7),
+            feature_row(103, "Ahri", "Mage", "Support", 550, 8, 5, 6, 7),
         ]
         current_feature_rows = [
             *old_feature_rows,
-            feature_row(90, "Malzahar", "Mage", "Support", 550, 2, 3, 9, 6),
+            feature_row(90, "Malzahar", "Mage", "Support", 550, 8, 5, 6, 7),
         ]
         old_vocab = build_model_vocab([], old_feature_rows, numeric_bins=4)
         current_vocab = build_model_vocab([], current_feature_rows, numeric_bins=4)
+        champion_features = champion_features_by_id(current_feature_rows)
 
         old_model = SharedFeatureDraftTransformer(
             shared_vocab_size=old_vocab["shared_vocab_size"],
@@ -305,21 +306,38 @@ class DraftModelDataTest(unittest.TestCase):
             for parameter in new_model.parameters():
                 parameter.fill_(-1)
 
-        load_finetune_checkpoint(new_model, old_model.state_dict(), old_vocab, current_vocab)
+        load_finetune_checkpoint(new_model, old_model.state_dict(), old_vocab, current_vocab, champion_features)
 
-        old_role_top = global_feature_id("role", "top", old_vocab)
-        new_role_top = global_feature_id("role", "top", current_vocab)
-        self.assertTrue(torch.all(new_model.embedding.weight[new_role_top] == float(old_role_top)))
+        current_champion_offset = current_vocab["feature_offsets"]["champion"]
+        new_champion_token_id = current_vocab["champion_id_to_token_id"]["90"]
+        old_82_token_id = current_vocab["champion_id_to_token_id"]["82"]
+        old_103_token_id = current_vocab["champion_id_to_token_id"]["103"]
 
-        old_champion_token_id = old_vocab["champion_id_to_token_id"]["103"]
-        new_champion_token_id = current_vocab["champion_id_to_token_id"]["103"]
-        self.assertTrue(torch.all(new_model.output.weight[new_champion_token_id] == float(old_champion_token_id + 100)))
-        self.assertTrue(torch.all(new_model.output.bias[new_champion_token_id] == float(old_champion_token_id + 200)))
-        self.assertTrue(torch.all(new_model.role_outputs["top"].weight[new_champion_token_id] == float(old_champion_token_id + 300)))
-        self.assertTrue(torch.all(new_model.role_outputs["top"].bias[new_champion_token_id] == float(old_champion_token_id + 400)))
+        expected_embedding = (
+            new_model.embedding.weight[current_champion_offset + old_82_token_id]
+            + new_model.embedding.weight[current_champion_offset + old_103_token_id]
+        ) / 2
+        self.assertTrue(torch.allclose(new_model.embedding.weight[current_champion_offset + new_champion_token_id], expected_embedding))
 
-        new_champion_90_token_id = current_vocab["champion_id_to_token_id"]["90"]
-        self.assertTrue(torch.all(new_model.output.weight[new_champion_90_token_id] == -1))
+        expected_output_weight = (
+            new_model.output.weight[old_82_token_id] + new_model.output.weight[old_103_token_id]
+        ) / 2
+        expected_output_bias = (
+            new_model.output.bias[old_82_token_id] + new_model.output.bias[old_103_token_id]
+        ) / 2
+        self.assertTrue(torch.allclose(new_model.output.weight[new_champion_token_id], expected_output_weight))
+        self.assertTrue(torch.allclose(new_model.output.bias[new_champion_token_id], expected_output_bias))
+
+        expected_role_weight = (
+            new_model.role_outputs["top"].weight[old_82_token_id] + new_model.role_outputs["top"].weight[old_103_token_id]
+        ) / 2
+        expected_role_bias = (
+            new_model.role_outputs["top"].bias[old_82_token_id] + new_model.role_outputs["top"].bias[old_103_token_id]
+        ) / 2
+        self.assertTrue(torch.allclose(new_model.role_outputs["top"].weight[new_champion_token_id], expected_role_weight))
+        self.assertTrue(torch.allclose(new_model.role_outputs["top"].bias[new_champion_token_id], expected_role_bias))
+
+        self.assertFalse(torch.all(new_model.output.weight[new_champion_token_id] == -1))
 
 
 def sample_draft_row():
