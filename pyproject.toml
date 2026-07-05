@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lol-champ-select-recommender"
+version = "0.1.0"
+description = "Terminal MVP for watching League of Legends champion select through the local client API."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+lol-champ-select = "lol_champ_select_recommender.__main__:main"
+lol-fetch-matches = "lol_champ_select_recommender.fetch_matches:main"
+lol-aggregate-matches = "lol_champ_select_recommender.aggregate_matches:main"
+lol-collect-ranked-matches = "lol_champ_select_recommender.collect_ranked_matches:main"
+lol-build-champion-features = "lol_champ_select_recommender.build_champion_features:main"
+lol-build-draft-dataset = "lol_champ_select_recommender.build_draft_dataset:main"
+lol-train-draft-model = "lol_champ_select_recommender.train_draft_model:main"
+
+[project.optional-dependencies]
+train = ["torch>=2.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
