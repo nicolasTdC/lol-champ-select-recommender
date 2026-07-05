@@ -21,7 +21,7 @@ lol-build-draft-dataset = "lol_champ_select_recommender.build_draft_dataset:main
 lol-train-draft-model = "lol_champ_select_recommender.train_draft_model:main"
 
 [project.optional-dependencies]
-train = ["numpy>=1.26", "torch>=2.3"]
+train = ["numpy>=1.26", "torch>=2.3", "tqdm>=4.66"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

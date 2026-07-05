@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import sys
 from pathlib import Path
@@ -20,6 +21,12 @@ from .modeling.draft_data import (
 )
 from .modeling.draft_model import MissingTorchError, build_model_class, require_torch
 from .roles import POSITION_ORDER
+
+try:
+    from tqdm.auto import tqdm
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+    def tqdm(iterable=None, **_kwargs):
+        return iterable if iterable is not None else range(0)
 
 
 class DraftDataset:
@@ -219,6 +226,8 @@ def main() -> int:
             use_hierarchy=args.use_hierarchy,
             optimizer=optimizer,
             train=True,
+            batch_fraction=args.train_fraction,
+            progress_label="train",
         )
         val_dataset.set_epoch(epoch)
         val_loss, val_acc, val_top5, val_top10, val_coarse_acc, val_mrr, val_macro_f1 = run_epoch(
@@ -234,6 +243,8 @@ def main() -> int:
             use_hierarchy=args.use_hierarchy,
             optimizer=None,
             train=False,
+            batch_fraction=args.eval_fraction,
+            progress_label="eval",
         )
         print(
             f"epoch {epoch:03d} "
@@ -273,6 +284,8 @@ def main() -> int:
                 "init_checkpoint": args.init_checkpoint,
                 "finetune_patch": args.finetune_patch,
                 "finetune_historical_ratio": args.finetune_historical_ratio,
+                "train_fraction": args.train_fraction,
+                "eval_fraction": args.eval_fraction,
                 "lr_scheduler": args.lr_scheduler,
                 "lr_scheduler_factor": args.lr_scheduler_factor,
                 "lr_scheduler_patience": args.lr_scheduler_patience,
@@ -380,6 +393,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="How many masked training examples to draw from each match row per epoch. Default: 1",
+    )
+    parser.add_argument(
+        "--train-fraction",
+        type=float,
+        default=1.0,
+        help="Fraction of train batches to process each epoch. Useful for faster sweeps. Default: 1.0",
+    )
+    parser.add_argument(
+        "--eval-fraction",
+        type=float,
+        default=1.0,
+        help="Fraction of validation batches to evaluate each epoch. Useful for faster sweeps. Default: 1.0",
     )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", help="Torch device override, e.g. cpu, cuda")
@@ -670,6 +695,8 @@ def run_epoch(
     use_hierarchy: bool,
     optimizer,
     train: bool,
+    batch_fraction: float = 1.0,
+    progress_label: str = "train",
 ) -> tuple[float, float, float, float, float, float, float]:
     model.train(train)
     total_loss = 0.0
@@ -687,7 +714,12 @@ def run_epoch(
     if train:
         random.shuffle(indices)
 
-    for start in range(0, len(indices), batch_size):
+    batch_starts = list(range(0, len(indices), batch_size))
+    if batch_fraction < 1.0 and batch_starts:
+        limit = max(1, int(math.ceil(len(batch_starts) * max(0.0, batch_fraction))))
+        batch_starts = batch_starts[:limit]
+
+    for start in tqdm(batch_starts, desc=progress_label, leave=False, dynamic_ncols=True):
         examples = [dataset[index] for index in indices[start : start + batch_size]]
         feature_ids = torch.tensor([example.feature_ids for example in examples], dtype=torch.long, device=device)
         query_index = torch.tensor([example.query_index for example in examples], dtype=torch.long, device=device)

@@ -273,8 +273,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--page-mode",
         choices=("sequential", "random"),
-        default="sequential",
-        help="How to traverse ranked ladder pages. Default: sequential",
+        default="random",
+        help="How to traverse ranked ladder pages. Default: random",
     )
     parser.add_argument(
         "--patch-mode",
