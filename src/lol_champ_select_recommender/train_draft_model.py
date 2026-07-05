@@ -14,6 +14,7 @@ from .modeling.draft_data import (
     champion_features_by_id,
     load_champion_feature_rows,
     load_jsonl,
+    to_int,
 )
 from .modeling.draft_model import MissingTorchError, build_model_class, require_torch
 
@@ -108,6 +109,12 @@ def main() -> int:
         seed=args.seed + 17,
         examples_per_row=1,
     )
+    champion_loss_weights = build_champion_loss_weights(
+        train_rows,
+        model_vocab,
+        power=args.champion_loss_weight_power,
+        torch_module=torch,
+    )
 
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Using {device=}")
@@ -121,7 +128,7 @@ def main() -> int:
         dropout=args.dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss(weight=champion_loss_weights.to(device) if champion_loss_weights is not None else None)
 
     best_val_loss = float("inf")
     for epoch in range(1, args.epochs + 1):
@@ -168,6 +175,9 @@ def main() -> int:
             "epoch": epoch,
             "val_loss": val_loss,
             "special_champion_tokens": SPECIAL_CHAMPION_TOKENS,
+            "train_config": {
+                "champion_loss_weight_power": args.champion_loss_weight_power,
+            },
         }
         torch.save(checkpoint, output_dir / "last.pt")
         if val_loss < best_val_loss:
@@ -196,6 +206,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unk-probability", type=float, default=0.03)
     parser.add_argument("--numeric-bins", type=int, default=8)
     parser.add_argument("--val-split", type=float, default=0.15)
+    parser.add_argument(
+        "--champion-loss-weight-power",
+        type=float,
+        default=0.5,
+        help="Loss reweighting power for rare champions. 0 disables weighting. Default: 0.5",
+    )
     parser.add_argument(
         "--train-examples-per-row",
         type=int,
@@ -250,3 +266,47 @@ def run_epoch(
     if total_examples == 0:
         return 0.0, 0.0
     return total_loss / total_examples, total_correct / total_examples
+
+
+def build_champion_loss_weights(
+    train_rows: list[dict[str, Any]],
+    model_vocab: dict[str, Any],
+    *,
+    power: float,
+    torch_module,
+):
+    if power <= 0:
+        return None
+
+    champion_counts: dict[int, int] = {}
+    for row in train_rows:
+        winning_side = str(row["winning_side"])
+        ally = row[winning_side]
+        for role in ("top", "jungle", "middle", "bottom", "utility"):
+            champion_id = to_int(ally.get(role))
+            if champion_id is None or champion_id <= 0:
+                continue
+            champion_counts[champion_id] = champion_counts.get(champion_id, 0) + 1
+
+    weights = torch_module.ones(model_vocab["shared_vocab_size"], dtype=torch_module.float32)
+    for special_token in SPECIAL_CHAMPION_TOKENS:
+        weights[int(model_vocab["champion_token_to_id"][special_token])] = 0.0
+
+    if not champion_counts:
+        return weights
+
+    max_count = max(champion_counts.values())
+    champion_weights: list[float] = []
+    for champion_id, count in champion_counts.items():
+        token_id = int(model_vocab["champion_id_to_token_id"][str(champion_id)])
+        value = (max_count / count) ** power
+        weights[token_id] = float(value)
+        champion_weights.append(float(value))
+
+    mean_weight = sum(champion_weights) / len(champion_weights)
+    if mean_weight > 0:
+        for champion_id, count in champion_counts.items():
+            token_id = int(model_vocab["champion_id_to_token_id"][str(champion_id)])
+            weights[token_id] = float(weights[token_id] / mean_weight)
+
+    return weights

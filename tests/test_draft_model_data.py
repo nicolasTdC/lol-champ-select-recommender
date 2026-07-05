@@ -4,7 +4,10 @@ import random
 import unittest
 from unittest.mock import patch
 
+import torch
+
 from lol_champ_select_recommender.train_draft_model import DraftDataset
+from lol_champ_select_recommender.train_draft_model import build_champion_loss_weights
 from lol_champ_select_recommender.modeling.draft_data import (
     NONE_TOKEN,
     PICK_TOKEN,
@@ -78,6 +81,30 @@ class DraftModelDataTest(unittest.TestCase):
 
         self.assertNotEqual(sample_a, sample_b)
         self.assertEqual(mock_build.call_count, 2)
+
+    def test_champion_loss_weights_upweight_rare_champions(self) -> None:
+        draft_rows = [
+            sample_draft_row(),
+            {
+                **sample_draft_row(),
+                "blue": {
+                    "top": 82,
+                    "jungle": 82,
+                    "middle": 82,
+                    "bottom": 82,
+                    "utility": 103,
+                },
+            },
+        ]
+        feature_rows = sample_feature_rows()
+        vocab = build_model_vocab(draft_rows, feature_rows, numeric_bins=4)
+
+        weights = build_champion_loss_weights(draft_rows, vocab, power=0.5, torch_module=torch)
+
+        self.assertIsNotNone(weights)
+        assert weights is not None
+        self.assertGreater(weights[vocab["champion_id_to_token_id"]["103"]].item(), weights[vocab["champion_id_to_token_id"]["82"]].item())
+        self.assertEqual(weights[vocab["champion_token_to_id"]["<PAD>"]].item(), 0.0)
 
 
 def sample_draft_row():
