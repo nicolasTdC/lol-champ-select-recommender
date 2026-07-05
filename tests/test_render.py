@@ -85,6 +85,22 @@ class RenderSessionTest(unittest.TestCase):
         self.assertIn("Recommendations", output)
         self.assertIn("Inference debug", output)
 
+    def test_render_pre_champ_select_recommendations(self) -> None:
+        static_data = StaticData(version="test", champions={}, summoner_spells={})
+
+        output = render_session(
+            phase="Lobby",
+            session=None,
+            static_data=static_data,
+            lockfile_label="test-lockfile",
+            recommendation_lines=["Recommendations", "  Lane", "    Hard: Support 55% (22g)"],
+        )
+
+        self.assertIn("Gameflow: Lobby", output)
+        self.assertIn("Recommendations", output)
+        self.assertIn("Hard: Support 55% (22g)", output)
+        self.assertIn("Not in champion select.", output)
+
     def test_render_infers_enemy_roles(self) -> None:
         static_data = StaticData(
             version="test",

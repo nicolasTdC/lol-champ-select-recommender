@@ -47,6 +47,9 @@ def render_session(
     lines.append("")
 
     if phase != "ChampSelect" or not session:
+        if recommendation_lines:
+            lines.extend(recommendation_lines)
+            lines.append("")
         lines.append("Not in champion select.")
         return "\n".join(lines)
 
