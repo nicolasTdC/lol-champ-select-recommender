@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import math
 import random
 import sys
 import time
@@ -51,6 +52,10 @@ def main() -> int:
     print(f"Matches/player: {args.matches_per_player}")
     print(f"Output:         {matches_dir}")
 
+    estimated_downloads = len(players) * max(0, args.matches_per_player)
+    download_workers = resolve_download_workers(args.download_workers, estimated_downloads)
+    print(f"Download workers: {download_workers} ({args.download_workers})")
+
     seen_match_ids = existing_match_ids(matches_dir)
     discovered_match_ids: list[str] = []
     pending_downloads: list[concurrent.futures.Future[tuple[str, str]]] = []
@@ -60,7 +65,6 @@ def main() -> int:
     player_errors = 0
     match_errors = 0
 
-    download_workers = max(1, int(args.download_workers))
     download_executor = concurrent.futures.ThreadPoolExecutor(max_workers=download_workers) if download_workers > 1 else None
     try:
         for player_index, entry in enumerate(players, start=1):
@@ -144,6 +148,8 @@ def main() -> int:
         "pages": args.pages,
         "max_players": args.max_players,
         "matches_per_player": args.matches_per_player,
+        "download_workers": download_workers,
+        "download_workers_mode": args.download_workers,
         "seed": args.seed,
         "ladder_entries": len(entries),
         "seed_players": len(players),
@@ -233,9 +239,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--download-workers",
-        type=int,
-        default=4,
-        help="Concurrent match-download workers. 1 keeps the old sequential behavior. Default: 4",
+        default="auto",
+        help="Concurrent match-download workers. Use an integer or 'auto'. Default: auto",
     )
     parser.add_argument(
         "--seed",
@@ -357,6 +362,21 @@ def existing_match_ids(matches_dir: Path) -> set[str]:
 
 def write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def resolve_download_workers(download_workers: str, estimated_downloads: int) -> int:
+    value = str(download_workers).strip().lower()
+    if value != "auto":
+        workers = int(value)
+        if workers < 1:
+            raise ValueError("--download-workers must be at least 1")
+        return workers
+
+    if estimated_downloads <= 0:
+        return 1
+
+    workers = math.ceil(estimated_downloads / 25)
+    return max(2, min(8, workers))
 
 
 def download_match(

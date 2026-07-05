@@ -10,7 +10,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from lol_champ_select_recommender.collect_ranked_matches import collect_ladder_entries, download_match, select_seed_players
+from lol_champ_select_recommender.collect_ranked_matches import (
+    collect_ladder_entries,
+    download_match,
+    resolve_download_workers,
+    select_seed_players,
+)
 from lol_champ_select_recommender.riot_api import RiotApiClient, RiotApiError, parse_riot_id, region_for_platform
 
 
@@ -105,6 +110,13 @@ class RiotApiTest(unittest.TestCase):
             status, error = download_match(client, "BR1_1", "americas", match_path, force=False)
             self.assertEqual((status, error), ("existing", None))
             self.assertEqual(client.calls, [("BR1_1", "americas")])
+
+    def test_resolve_download_workers_auto_scales_with_job_size(self) -> None:
+        self.assertEqual(resolve_download_workers("auto", 0), 1)
+        self.assertEqual(resolve_download_workers("auto", 10), 2)
+        self.assertEqual(resolve_download_workers("auto", 100), 4)
+        self.assertEqual(resolve_download_workers("auto", 500), 8)
+        self.assertEqual(resolve_download_workers("3", 500), 3)
 
 
 class FakeRiotClient:
