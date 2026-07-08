@@ -15,6 +15,8 @@ from .roles import load_role_priors
 
 def main() -> int:
     args = parse_args()
+    if args.debug_inference:
+        reset_debug_inference_log(args.debug_inference_log)
 
     try:
         connection, lockfile = connect(args.lockfile, args.host)
@@ -197,6 +199,12 @@ def write_debug_inference_log(path: str | Path, *, phase: str, lines: list[str])
         for line in lines:
             file.write(f"{line}\n")
         file.write("\n")
+
+
+def reset_debug_inference_log(path: str | Path) -> None:
+    log_path = Path(path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("", encoding="utf-8")
 
 
 def load_recommender(args: argparse.Namespace) -> tuple[DraftRecommender | None, str]:
