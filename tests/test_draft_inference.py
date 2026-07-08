@@ -14,6 +14,8 @@ from lol_champ_select_recommender.modeling.draft_inference import (
     build_live_queries,
     infer_my_side,
     load_champion_blacklist,
+    selected_role_map,
+    team_players_by_side,
 )
 from lol_champ_select_recommender.modeling.player_pruning import PlayerPruneIndex, PruneStats
 
@@ -35,7 +37,37 @@ class DraftInferenceTest(unittest.TestCase):
         }
 
         self.assertEqual(bans_by_side(session, "blue"), ([3], [99]))
-        self.assertEqual(bans_by_side(session, "red"), ([99], [3]))
+        self.assertEqual(bans_by_side(session, "red"), ([3], [99]))
+
+    def test_team_players_by_side_keeps_lcu_ally_enemy_lists_on_red_side(self) -> None:
+        session = {
+            "myTeam": [{"cellId": 8, "championId": 1}],
+            "theirTeam": [{"cellId": 2, "championId": 2}],
+        }
+
+        allies, enemies = team_players_by_side(session, "red")
+
+        self.assertEqual([player["cellId"] for player in allies], [8])
+        self.assertEqual([player["cellId"] for player in enemies], [2])
+
+    def test_selected_role_map_uses_hovers_except_local_player_hover(self) -> None:
+        static_data = StaticData(
+            version="test",
+            champions={1: "Annie", 2: "Olaf", 3: "Galio", 4: "Twisted Fate"},
+            summoner_spells={},
+            champion_keys={1: "Annie", 2: "Olaf", 3: "Galio", 4: "TwistedFate"},
+        )
+        players = [
+            {"cellId": 1, "assignedPosition": "top", "championId": 0, "championPickIntent": 1},
+            {"cellId": 2, "assignedPosition": "jungle", "championId": 0, "championPickIntent": 2},
+            {"cellId": 3, "assignedPosition": "middle", "championId": 3, "championPickIntent": 4},
+        ]
+
+        role_map = selected_role_map(players, static_data, exclude_hover_cell_ids={1})
+
+        self.assertIsNone(role_map["top"])
+        self.assertEqual(role_map["jungle"], 2)
+        self.assertEqual(role_map["middle"], 3)
 
     def test_build_live_queries_returns_open_ally_roles(self) -> None:
         static_data = StaticData(
@@ -153,14 +185,14 @@ class DraftInferenceTest(unittest.TestCase):
             "localPlayerCellId": 1,
             "myTeam": [
                 {"cellId": 1, "championId": 1, "assignedPosition": "top"},
-                {"cellId": 2, "championId": 0},
+                {"cellId": 2, "championId": 0, "championPickIntent": 5, "assignedPosition": "jungle"},
                 {"cellId": 3, "championId": 0},
                 {"cellId": 4, "championId": 0},
                 {"cellId": 5, "championId": 0},
             ],
             "theirTeam": [
                 {"cellId": 6, "championId": 2, "assignedPosition": "jungle"},
-                {"cellId": 7, "championId": 0},
+                {"cellId": 7, "championId": 0, "championPickIntent": 4, "assignedPosition": "middle"},
                 {"cellId": 8, "championId": 0},
                 {"cellId": 9, "championId": 0},
                 {"cellId": 10, "championId": 0},
@@ -173,11 +205,13 @@ class DraftInferenceTest(unittest.TestCase):
 
         queries = build_live_queries(session, static_data, model_vocab, champion_features)
 
-        self.assertEqual([query.role for query in queries], ["jungle", "middle", "bottom", "utility"])
+        self.assertEqual([query.role for query in queries], ["middle", "bottom", "utility"])
         self.assertTrue(all(query.query_index in range(5) for query in queries))
         self.assertIn(1, queries[0].blocked_champion_ids)
         self.assertIn(2, queries[0].blocked_champion_ids)
         self.assertIn(3, queries[0].blocked_champion_ids)
+        self.assertIn(4, queries[0].blocked_champion_ids)
+        self.assertIn(5, queries[0].blocked_champion_ids)
         self.assertIn(99, queries[0].blocked_champion_ids)
 
     def test_debug_lines_include_token_dump(self) -> None:

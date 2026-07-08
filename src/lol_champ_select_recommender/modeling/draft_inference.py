@@ -446,7 +446,13 @@ def build_live_queries(
         return []
 
     ally_players, enemy_players = team_players_by_side(session, my_side)
-    ally_roles = selected_role_map(ally_players, static_data, role_priors=role_priors)
+    local_cell_id = _as_int(session.get("localPlayerCellId"))
+    ally_roles = selected_role_map(
+        ally_players,
+        static_data,
+        role_priors=role_priors,
+        exclude_hover_cell_ids={local_cell_id} if local_cell_id is not None else set(),
+    )
     enemy_roles = selected_role_map(enemy_players, static_data, role_priors=role_priors)
     ally_bans, enemy_bans = bans_by_side(session, my_side)
 
@@ -584,9 +590,7 @@ def infer_my_side(session: dict[str, Any]) -> str | None:
 def team_players_by_side(session: dict[str, Any], my_side: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     my_team = session.get("myTeam", [])
     their_team = session.get("theirTeam", [])
-    if my_side == "blue":
-        return _dict_players(my_team), _dict_players(their_team)
-    return _dict_players(their_team), _dict_players(my_team)
+    return _dict_players(my_team), _dict_players(their_team)
 
 
 def selected_role_map(
@@ -594,12 +598,15 @@ def selected_role_map(
     static_data: StaticData,
     *,
     role_priors: RolePriors | None = None,
+    exclude_hover_cell_ids: set[int] | None = None,
 ) -> dict[str, int | None]:
-    selected_players = [
-        player
-        for player in players
-        if _as_int(player.get("championId")) and _as_int(player.get("championId")) > 0
-    ]
+    selected_players: list[dict[str, Any]] = []
+    for player in players:
+        cell_id = _as_int(player.get("cellId"))
+        champion_id = live_champion_id(player, use_hover=cell_id not in (exclude_hover_cell_ids or set()))
+        if champion_id and champion_id > 0:
+            selected_players.append({**player, "championId": champion_id})
+
     assignments = assign_roles(selected_players, static_data, infer_missing=True, role_priors=role_priors)
     role_map: dict[str, int | None] = {position: None for position in POSITION_ORDER}
 
@@ -616,11 +623,18 @@ def selected_role_map(
     return role_map
 
 
+def live_champion_id(player: dict[str, Any], *, use_hover: bool = True) -> int | None:
+    champion_id = _as_int(player.get("championId"))
+    if champion_id and champion_id > 0:
+        return champion_id
+    if not use_hover:
+        return None
+    hover_id = _as_int(player.get("championPickIntent"))
+    return hover_id if hover_id and hover_id > 0 else None
+
+
 def bans_by_side(session: dict[str, Any], my_side: str) -> tuple[list[int], list[int]]:
-    my_bans, their_bans = bans_by_team(session)
-    if my_side == "blue":
-        return my_bans, their_bans
-    return their_bans, my_bans
+    return bans_by_team(session)
 
 
 def _dict_players(players: Any) -> list[dict[str, Any]]:
