@@ -137,6 +137,36 @@ class RenderSessionTest(unittest.TestCase):
         self.assertIn("Support?", output)
         self.assertIn("? = inferred from champion/spells", output)
 
+    def test_render_bans_from_actions_when_bans_object_lags(self) -> None:
+        static_data = StaticData(
+            version="test",
+            champions={3: "Galio", 99: "Lux"},
+            summoner_spells={},
+        )
+        session = {
+            "localPlayerCellId": 1,
+            "timer": {},
+            "actions": [
+                [
+                    {"actorCellId": 1, "championId": 3, "isAllyAction": True, "type": "ban"},
+                    {"actorCellId": 6, "championId": 99, "isAllyAction": False, "type": "ban"},
+                ]
+            ],
+            "myTeam": [],
+            "theirTeam": [],
+            "bans": {"myTeamBans": [], "theirTeamBans": []},
+        }
+
+        output = render_session(
+            phase="ChampSelect",
+            session=session,
+            static_data=static_data,
+            lockfile_label="test-lockfile",
+        )
+
+        self.assertIn("Ally bans:  Galio", output)
+        self.assertIn("Enemy bans: Lux", output)
+
 
 class RoleAssignmentTest(unittest.TestCase):
     def test_smite_forces_enemy_jungle_when_available(self) -> None:

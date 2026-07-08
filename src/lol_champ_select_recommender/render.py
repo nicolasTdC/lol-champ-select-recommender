@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
+from .champ_select import bans_by_team, flat_actions
 from .ddragon import StaticData
 from .roles import RolePriors, assign_roles
 
@@ -84,9 +85,9 @@ def render_session(
         lines.append("  ? = inferred from champion/spells")
     lines.append("")
 
-    bans = session.get("bans", {})
-    lines.append(f"Ally bans:  {_name_list(bans.get('myTeamBans', []), static_data)}")
-    lines.append(f"Enemy bans: {_name_list(bans.get('theirTeamBans', []), static_data)}")
+    ally_bans, enemy_bans = bans_by_team(session)
+    lines.append(f"Ally bans:  {_name_list(ally_bans, static_data)}")
+    lines.append(f"Enemy bans: {_name_list(enemy_bans, static_data)}")
     if debug_lines:
         lines.append("")
         lines.extend(debug_lines)
@@ -163,14 +164,7 @@ def _team_table(
 
 
 def _current_actions(session: dict[str, Any], static_data: StaticData) -> list[str]:
-    actions = []
-    for group in session.get("actions", []):
-        if not isinstance(group, list):
-            continue
-        for action in group:
-            if isinstance(action, dict):
-                actions.append(action)
-
+    actions = flat_actions(session)
     in_progress = [action for action in actions if action.get("isInProgress")]
     if not in_progress:
         return ["Current action: -"]

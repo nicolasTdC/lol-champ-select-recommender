@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..champ_select import bans_by_team
 from ..ddragon import StaticData
 from ..roles import POSITION_ORDER, ROLE_NAMES, RolePriors, assign_roles
 from .draft_data import (
@@ -616,9 +617,7 @@ def selected_role_map(
 
 
 def bans_by_side(session: dict[str, Any], my_side: str) -> tuple[list[int], list[int]]:
-    bans = session.get("bans", {})
-    my_bans = [_as_int(value) or -1 for value in bans.get("myTeamBans", [])]
-    their_bans = [_as_int(value) or -1 for value in bans.get("theirTeamBans", [])]
+    my_bans, their_bans = bans_by_team(session)
     if my_side == "blue":
         return my_bans, their_bans
     return their_bans, my_bans

@@ -10,6 +10,7 @@ from lol_champ_select_recommender.modeling.draft_inference import (
     DraftPickRecommendation,
     DraftRecommender,
     DraftRoleRecommendation,
+    bans_by_side,
     build_live_queries,
     infer_my_side,
     load_champion_blacklist,
@@ -21,6 +22,20 @@ class DraftInferenceTest(unittest.TestCase):
     def test_infer_my_side_uses_local_cell_id(self) -> None:
         self.assertEqual(infer_my_side({"localPlayerCellId": 2}), "blue")
         self.assertEqual(infer_my_side({"localPlayerCellId": 8}), "red")
+
+    def test_bans_by_side_uses_actions_when_bans_object_lags(self) -> None:
+        session = {
+            "actions": [
+                [
+                    {"championId": 3, "isAllyAction": True, "type": "ban"},
+                    {"championId": 99, "isAllyAction": False, "type": "ban"},
+                ]
+            ],
+            "bans": {"myTeamBans": [], "theirTeamBans": []},
+        }
+
+        self.assertEqual(bans_by_side(session, "blue"), ([3], [99]))
+        self.assertEqual(bans_by_side(session, "red"), ([99], [3]))
 
     def test_build_live_queries_returns_open_ally_roles(self) -> None:
         static_data = StaticData(
