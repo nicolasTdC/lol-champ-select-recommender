@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .ddragon import load_static_data
 from .lcu import LcuError, connect
+from .lilith_brief import format_lilith_brief
 from .modeling.draft_inference import DraftRecommender
 from .render import render_session
 from .roles import load_role_priors
@@ -31,6 +32,9 @@ def main() -> int:
         patch=args.role_priors_patch,
         min_total_games=args.role_priors_min_games,
     )
+    if args.lilith:
+        return _run_lilith_once(args, connection, static_data, role_priors)
+
     recommender, model_status = load_recommender(args)
     model_lines = str(recommender.model).splitlines() if recommender else None
     lockfile_label = (
@@ -121,6 +125,11 @@ def parse_args() -> argparse.Namespace:
         help="Render one snapshot and exit.",
     )
     parser.add_argument(
+        "--lilith",
+        action="store_true",
+        help="Print a compact champ-select brief for Lilith and exit. Skips the draft model.",
+    )
+    parser.add_argument(
         "--no-clear",
         action="store_true",
         help="Do not clear the terminal between updates.",
@@ -205,6 +214,25 @@ def reset_debug_inference_log(path: str | Path) -> None:
     log_path = Path(path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("", encoding="utf-8")
+
+
+def _run_lilith_once(args, connection, static_data, role_priors) -> int:
+    try:
+        phase = connection.gameflow_phase()
+        session = connection.champ_select_session() if phase == "ChampSelect" else None
+        print(
+            format_lilith_brief(
+                phase=phase,
+                session=session,
+                static_data=static_data,
+                role_priors=role_priors,
+            ),
+            flush=True,
+        )
+        return 0
+    except LcuError as exc:
+        print(f"League client error: {exc}", flush=True)
+        return 1
 
 
 def load_recommender(args: argparse.Namespace) -> tuple[DraftRecommender | None, str]:
