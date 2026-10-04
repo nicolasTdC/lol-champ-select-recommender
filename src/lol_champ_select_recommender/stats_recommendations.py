@@ -49,7 +49,7 @@ def run_stats_only(args) -> int:
         f"Soft: {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR across all roles",
         "Hard: Soft plus the same threshold in the listed role",
         f"Extrapolated: also allow <{MIN_GAMES} games with losses <{MAX_LOSSES_FOR_LOW_SAMPLE:g}; includes zero games",
-        "Whitelisted: excludes global and role-specific blacklist entries",
+        "Whitelisted: All Lanes applies global blacklist entries; lane lists also apply role-specific entries",
         "Not Recommended: exact complement of each filter, including insufficient samples; whitelisted complements also include blacklist exclusions.",
         "Ranking: games descending, then WR descending. WR is historical, not a model score.",
         "", "Lane",
@@ -59,13 +59,15 @@ def run_stats_only(args) -> int:
 
     recommendation_start = len(lines)
     not_recommended = ["", "Not Recommended"]
-    for role in POSITION_ORDER:
-        lines.extend(["", ROLE_NAMES[role]])
-        not_recommended.extend(["", ROLE_NAMES[role]])
+    for role in (None, *POSITION_ORDER):
+        heading = ROLE_NAMES[role] if role else "All Lanes"
+        lines.extend(["", heading])
+        not_recommended.extend(["", heading])
         groups = (
             ("Soft", index.passes_soft, False),
-            ("Hard", lambda cid: index.passes_soft(cid) and index.passes_hard(cid, role), True),
             ("Extrapolated Soft", index.passes_soft_extrapolated, False),
+        ) if role is None else (
+            ("Hard", lambda cid: index.passes_soft(cid) and index.passes_hard(cid, role), True),
             ("Extrapolated Hard", lambda cid: index.passes_soft_extrapolated(cid) and index.passes_hard_extrapolated(cid, role), True),
         )
         for whitelisted in (False, True):

@@ -30,11 +30,16 @@ class MainTest(unittest.TestCase):
             model.assert_not_called()
             self.assertIn("Annie: 20 games, 12W/8L, WR 60.0%", output.getvalue())
             self.assertNotIn("100 games", output.getvalue())
-            soft_list = output.getvalue().split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
+            soft_list = output.getvalue().split("  Soft:\n", 1)[1].split("  Extrapolated Soft:", 1)[0]
             self.assertLess(soft_list.index("Olaf:"), soft_list.index("Annie:"))
             recommended, rejected = output.getvalue().split("\nNot Recommended\n", 1)
-            recommended_soft = recommended.split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
-            rejected_soft = rejected.split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
+            recommended_soft = recommended.split("  Soft:\n", 1)[1].split("  Extrapolated Soft:", 1)[0]
+            rejected_soft = rejected.split("  Soft:\n", 1)[1].split("  Extrapolated Soft:", 1)[0]
+            for section in (recommended, rejected.split("\nBan Recommendations", 1)[0]):
+                self.assertEqual(section.count("\nAll Lanes\n"), 1)
+                self.assertEqual(section.count("\n  Soft:\n"), 1)
+                self.assertEqual(section.count("\n  Extrapolated Soft:\n"), 1)
+                self.assertEqual(section.count("\n  Hard:\n"), 5)
             self.assertNotIn("Galio:", recommended_soft)
             self.assertNotIn("Shen:", recommended_soft)
             self.assertNotIn("Annie:", rejected_soft)
