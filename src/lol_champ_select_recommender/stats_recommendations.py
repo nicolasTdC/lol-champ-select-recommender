@@ -49,7 +49,7 @@ def run_stats_only(args) -> int:
         "Hard: Soft plus the same threshold in the listed role",
         f"Extrapolated: also allow <{MIN_GAMES} games with losses <{MAX_LOSSES_FOR_LOW_SAMPLE:g}; includes zero games",
         "Whitelisted: excludes global and role-specific blacklist entries",
-        "Ranking: WR descending, then games descending; zero-game champions last. WR is historical, not a model score.",
+        "Ranking: games descending, then WR descending. WR is historical, not a model score.",
         "", "Lane",
     ]
     for label, rows in (("Hard", index.hard_lane_recommendations()), ("Soft", index.soft_lane_recommendations())):
@@ -68,8 +68,8 @@ def run_stats_only(args) -> int:
                 stats_for = index.role_stats if role_specific else lambda cid, _: index.overall_stats(cid)
                 kept = [cid for cid in candidates if passes(cid) and (not whitelisted or not blacklist.blocks(cid, role))]
                 kept.sort(key=lambda cid: (
-                    -(stats_for(cid, role) or zero).win_rate,
                     -(stats_for(cid, role) or zero).games,
+                    -(stats_for(cid, role) or zero).win_rate,
                     features.get(cid, {}).get("champion_name", str(cid)),
                 ))
                 lines.append(f"  {'Whitelisted ' if whitelisted else ''}{label}:")

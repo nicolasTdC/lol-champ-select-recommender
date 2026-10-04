@@ -17,6 +17,7 @@ class MainTest(unittest.TestCase):
             path.write_text(
                 "player,riot_id,champion_id,champion_name,role,games,wins,losses\n"
                 "Alice,Alice#BR1,1,Annie,middle,20,12,8\n"
+                "Alice,Alice#BR1,2,Olaf,top,30,16,14\n"
                 "Bob,Bob#BR1,1,Annie,middle,80,0,80\n",
                 encoding="utf-8",
             )
@@ -27,6 +28,8 @@ class MainTest(unittest.TestCase):
             model.assert_not_called()
             self.assertIn("Annie: 20 games, 12W/8L, WR 60.0%", output.getvalue())
             self.assertNotIn("100 games", output.getvalue())
+            soft_list = output.getvalue().split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
+            self.assertLess(soft_list.index("Olaf:"), soft_list.index("Annie:"))
 
     def test_write_debug_inference_log_appends_snapshot(self) -> None:
         with TemporaryDirectory() as directory:
