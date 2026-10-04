@@ -358,7 +358,7 @@ class DraftInferenceTest(unittest.TestCase):
             lines,
         )
         self.assertIn("    Lane Hard: 20+ games and 52%+ WR on that lane", lines)
-        self.assertIn("    Lane Soft: <20 games and losses < 9.6 on that lane; missing lanes count as 0 games", lines)
+        self.assertIn("    Lane Soft: Lane Hard OR <20 games and losses < 9.6 on that lane; missing lanes count as 0 games", lines)
         self.assertIn("  Top", lines)
         self.assertIn("    Raw: Annie 60%, Olaf 30%", lines)
         self.assertIn("    Soft: Annie 70%", lines)
@@ -406,7 +406,7 @@ class DraftInferenceTest(unittest.TestCase):
         self.assertIn("  Legend", lines)
         self.assertIn("  Lane", lines)
         self.assertIn("    Hard: Support 55% (22g)", lines)
-        self.assertIn("    Soft: Bot 0% (0g), Mid 0% (0g), Jungle 70% (10g)", lines)
+        self.assertIn("    Soft: Bot 0% (0g), Mid 0% (0g), Jungle 70% (10g), Support 55% (22g)", lines)
 
     def test_recommend_lines_show_whitelisted_views(self) -> None:
         static_data = StaticData(

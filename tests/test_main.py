@@ -36,7 +36,7 @@ class MainTest(unittest.TestCase):
             self.assertIn("Top (80 games", hard_lanes)
             self.assertNotIn("Mid (", hard_lanes)
             self.assertIn("Top (80 games", soft_lanes)
-            self.assertIn("Mid (20 games", soft_lanes)
+            self.assertNotIn("Mid (", soft_lanes)
             self.assertNotIn("Jungle (", soft_lanes)
             soft_list = output.getvalue().split("  Soft:\n", 1)[1].split("  Extrapolated Soft:", 1)[0]
             self.assertLess(soft_list.index("Olaf:"), soft_list.index("Annie:"))

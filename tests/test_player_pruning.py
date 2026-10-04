@@ -99,7 +99,12 @@ class PlayerPruningTest(unittest.TestCase):
         self.assertIsNotNone(index)
         assert index is not None
         self.assertEqual([role for role, _stats in index.hard_lane_recommendations()], ["utility"])
-        self.assertEqual([role for role, _stats in index.soft_lane_recommendations()], ["bottom", "jungle", "middle"])
+        self.assertEqual([role for role, _stats in index.soft_lane_recommendations()], ["bottom", "jungle", "middle", "utility"])
+        self.assertTrue(
+            {role for role, _ in index.hard_lane_recommendations()}.issubset(
+                {role for role, _ in index.soft_lane_recommendations()}
+            )
+        )
         bottom_stats = index.soft_lane_recommendations()[0][1]
         self.assertEqual(bottom_stats.games, 0)
         self.assertEqual(bottom_stats.losses, 0)

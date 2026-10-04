@@ -779,7 +779,7 @@ def _pruning_legend_lines() -> list[str]:
         f"    Champion Extrapolated: also keeps <{MIN_GAMES} games when losses < {MAX_LOSSES_FOR_LOW_SAMPLE:g}; missing stats count as 0 games",
         "    Whitelisted: same filters after the champion blacklist",
         f"    Lane Hard: {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR on that lane",
-        f"    Lane Soft: <{MIN_GAMES} games and losses < {MAX_LOSSES_FOR_LOW_SAMPLE:g} on that lane; missing lanes count as 0 games",
+        f"    Lane Soft: Lane Hard OR <{MIN_GAMES} games and losses < {MAX_LOSSES_FOR_LOW_SAMPLE:g} on that lane; missing lanes count as 0 games",
     ]
 
 

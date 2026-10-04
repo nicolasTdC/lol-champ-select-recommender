@@ -74,7 +74,7 @@ class PlayerPruneIndex:
             (role, stats)
             for role in POSITION_ORDER
             for stats in [self.by_role.get(role, PruneStats(games=0, wins=0, losses=0))]
-            if stats.games < MIN_GAMES and stats.losses < LANE_SOFT_MAX_LOSSES_FOR_LOW_SAMPLE
+            if passes_extrapolated_threshold(stats)
         ]
         return sorted(rows, key=lambda item: (item[1].losses, -item[1].win_rate, -item[1].games, item[0]))
 
