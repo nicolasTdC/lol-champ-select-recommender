@@ -16,6 +16,10 @@ from .roles import load_role_priors
 
 def main() -> int:
     args = parse_args()
+    if args.stats_only:
+        from .stats_recommendations import run_stats_only
+
+        return run_stats_only(args)
     if args.debug_inference:
         reset_debug_inference_log(args.debug_inference_log)
 
@@ -100,6 +104,8 @@ def main() -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Watch live League champion select in the terminal.")
+    parser.add_argument("--stats-only", action="store_true", help="Show player-stat recommendations offline and exit; no client or model required.")
+    parser.add_argument("--profiles", nargs="+", help="Player names or Riot IDs to include in --stats-only. Default: all profiles in --player-stats.")
     parser.add_argument(
         "--lockfile",
         help="Path to League's lockfile. Overrides automatic detection and LOL_LOCKFILE.",
@@ -169,7 +175,7 @@ def parse_args() -> argparse.Namespace:
         "--recommendation-count",
         type=int,
         default=10,
-        help="How many champion recommendations to show per open role. Default: 10",
+        help="How many champion recommendations to show per role or stats list. Default: 10",
     )
     parser.add_argument(
         "--player-stats",

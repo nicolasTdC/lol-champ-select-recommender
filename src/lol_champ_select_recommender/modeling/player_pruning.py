@@ -79,7 +79,7 @@ class PlayerPruneIndex:
         return sorted(rows, key=lambda item: (item[1].losses, -item[1].win_rate, -item[1].games, item[0]))
 
 
-def load_player_prune_index(path: str | Path) -> PlayerPruneIndex | None:
+def load_player_prune_index(path: str | Path, *, profiles: list[str] | None = None) -> PlayerPruneIndex | None:
     prune_path = Path(path)
     if not prune_path.is_file():
         return None
@@ -95,6 +95,10 @@ def load_player_prune_index(path: str | Path) -> PlayerPruneIndex | None:
     role_totals: dict[str, list[int]] = {}
 
     for row in rows:
+        if profiles and not {str(row.get(key, "")).casefold() for key in ("player", "riot_id")}.intersection(
+            profile.casefold() for profile in profiles
+        ):
+            continue
         champion_id = _as_int(row.get("champion_id"))
         role = normalize_role(row.get("role"))
         games = _as_int(row.get("games")) or 0
