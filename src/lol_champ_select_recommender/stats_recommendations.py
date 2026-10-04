@@ -50,14 +50,18 @@ def run_stats_only(args) -> int:
         "Hard: Soft plus the same threshold in the listed role",
         f"Extrapolated: also allow <{MIN_GAMES} games with losses <{MAX_LOSSES_FOR_LOW_SAMPLE:g}; includes zero games",
         "Whitelisted: excludes global and role-specific blacklist entries",
+        "Not Recommended: exact complement of each filter, including insufficient samples; whitelisted complements also include blacklist exclusions.",
         "Ranking: games descending, then WR descending. WR is historical, not a model score.",
         "", "Lane",
     ]
     for label, rows in (("Hard", index.hard_lane_recommendations()), ("Soft", index.soft_lane_recommendations())):
         lines.append(f"  {label}: " + ("; ".join(f"{ROLE_NAMES[role]} ({stats_text(stats)})" for role, stats in rows) or "-"))
 
+    recommendation_start = len(lines)
+    not_recommended = ["", "Not Recommended"]
     for role in POSITION_ORDER:
         lines.extend(["", ROLE_NAMES[role]])
+        not_recommended.extend(["", ROLE_NAMES[role]])
         groups = (
             ("Soft", index.passes_soft, False),
             ("Hard", lambda cid: index.passes_soft(cid) and index.passes_hard(cid, role), True),
@@ -67,17 +71,20 @@ def run_stats_only(args) -> int:
         for whitelisted in (False, True):
             for label, passes, role_specific in groups:
                 stats_for = index.role_stats if role_specific else lambda cid, _: index.overall_stats(cid)
-                kept = [cid for cid in candidates if passes(cid) and (not whitelisted or not blacklist.blocks(cid, role))]
-                kept.sort(key=lambda cid: (
-                    -(stats_for(cid, role) or zero).games,
-                    -(stats_for(cid, role) or zero).win_rate,
-                    features.get(cid, {}).get("champion_name", str(cid)),
-                ))
-                lines.append(f"  {'Whitelisted ' if whitelisted else ''}{label}:")
-                if not kept:
-                    lines.append("    -")
-                for cid in kept[:args.recommendation_count]:
-                    name = features.get(cid, {}).get("champion_name", str(cid))
-                    lines.append(f"    {name}: {stats_text(stats_for(cid, role) or zero)}")
+                kept = {cid for cid in candidates if passes(cid) and (not whitelisted or not blacklist.blocks(cid, role))}
+                for destination, champion_ids in ((lines, kept), (not_recommended, candidates - kept)):
+                    ranked = sorted(champion_ids, key=lambda cid: (
+                        -(stats_for(cid, role) or zero).games,
+                        -(stats_for(cid, role) or zero).win_rate,
+                        features.get(cid, {}).get("champion_name", str(cid)),
+                    ))
+                    destination.append(f"  {'Whitelisted ' if whitelisted else ''}{label}:")
+                    if not ranked:
+                        destination.append("    -")
+                    for cid in ranked[:args.recommendation_count]:
+                        name = features.get(cid, {}).get("champion_name", str(cid))
+                        destination.append(f"    {name}: {stats_text(stats_for(cid, role) or zero)}")
+    lines.insert(recommendation_start, "\nRecommended")
+    lines.extend(not_recommended)
     print("\n".join(lines))
     return 0

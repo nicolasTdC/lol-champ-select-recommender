@@ -18,6 +18,8 @@ class MainTest(unittest.TestCase):
                 "player,riot_id,champion_id,champion_name,role,games,wins,losses\n"
                 "Alice,Alice#BR1,1,Annie,middle,20,12,8\n"
                 "Alice,Alice#BR1,2,Olaf,top,30,16,14\n"
+                "Alice,Alice#BR1,3,Galio,top,40,10,30\n"
+                "Alice,Alice#BR1,4,Shen,top,10,0,10\n"
                 "Bob,Bob#BR1,1,Annie,middle,80,0,80\n",
                 encoding="utf-8",
             )
@@ -30,6 +32,16 @@ class MainTest(unittest.TestCase):
             self.assertNotIn("100 games", output.getvalue())
             soft_list = output.getvalue().split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
             self.assertLess(soft_list.index("Olaf:"), soft_list.index("Annie:"))
+            recommended, rejected = output.getvalue().split("\nNot Recommended\n", 1)
+            recommended_soft = recommended.split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
+            rejected_soft = rejected.split("  Soft:\n", 1)[1].split("  Hard:", 1)[0]
+            self.assertNotIn("Galio:", recommended_soft)
+            self.assertNotIn("Shen:", recommended_soft)
+            self.assertNotIn("Annie:", rejected_soft)
+            self.assertNotIn("Olaf:", rejected_soft)
+            self.assertLess(rejected_soft.index("Galio:"), rejected_soft.index("Shen:"))
+            rejected_extrapolated = rejected.split("  Extrapolated Soft:\n", 1)[1].split("  Extrapolated Hard:", 1)[0]
+            self.assertIn("Shen:", rejected_extrapolated)
 
     def test_write_debug_inference_log_appends_snapshot(self) -> None:
         with TemporaryDirectory() as directory:
