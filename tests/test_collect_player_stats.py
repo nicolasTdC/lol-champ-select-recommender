@@ -3,10 +3,37 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from lol_champ_select_recommender.collect_player_stats import collect_player_stats, _load_match, accumulate_opponents
+from lol_champ_select_recommender.collect_player_stats import collect_player_stats, _load_match, accumulate_opponents, preserve_other_stats
 
 
 class CollectPlayerStatsTest(unittest.TestCase):
+    def test_incremental_preserves_other_profiles_and_queues(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.csv"
+            path.write_text("player,queue_id,games\nalice,420,10\nalice,440,20\nbob,420,30\n")
+            rows = preserve_other_stats(path, [{"player": "alice", "queue_id": 420, "games": 11}], ["alice"], [420])
+        self.assertEqual([(r["player"], int(r["queue_id"]), int(r["games"])) for r in rows],
+                         [("alice", 420, 11), ("alice", 440, 20), ("bob", 420, 30)])
+
+    def test_incremental_stops_at_known_match_and_rebuilds_without_duplicates(self):
+        import json
+
+        client = Mock()
+        client.account_by_riot_id.return_value = {"puuid": "player"}
+        client.match_ids_by_puuid.return_value = ["BR1_new", "BR1_old"]
+        participant = {"puuid": "player", "championId": 1, "participantId": 1, "teamId": 100, "win": True}
+        match = {"info": {"queueId": 420, "participants": [participant]}}
+        client.match_by_id.return_value = match
+        with TemporaryDirectory() as directory:
+            cache = Path(directory)
+            (cache / "BR1_old.json").write_text(json.dumps(match))
+            (cache / "BR1_older.json").write_text(json.dumps(match))
+            with patch("lol_champ_select_recommender.collect_player_stats._participant_roles", return_value={1: "middle"}):
+                rows = collect_player_stats(client, Mock(), riot_ids=["Alice#BR1"], region="americas", queue=[420], match_type="ranked", matches_per_player=1000, sleep_seconds=0, incremental=True, matches_dir=cache)
+        self.assertEqual(client.match_ids_by_puuid.call_count, 1)
+        client.match_by_id.assert_called_once_with("BR1_new", "americas")
+        self.assertEqual(rows[0]["games"], 3)
+
     def test_enemy_stats_record_personal_outcome_and_exclude_allies(self):
         player = {"puuid": "me", "teamId": 100, "participantId": 1, "championId": 1, "win": False}
         ally = {"puuid": "ally", "teamId": 100, "participantId": 2, "championId": 2, "win": False}

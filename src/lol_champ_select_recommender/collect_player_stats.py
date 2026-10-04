@@ -65,13 +65,18 @@ def main() -> int:
             download_workers=args.download_workers,
             matches_dir=Path(args.matches_dir),
             opponent_aggregates=opponent_aggregates,
+            incremental=args.incremental,
         )
     except (KeyError, RuntimeError, RiotApiError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    opponent_rows = finalize_stats(opponent_aggregates)
+    if args.incremental:
+        rows = preserve_other_stats(Path(args.output), rows, args.riot_id, args.queue)
+        opponent_rows = preserve_other_stats(Path(args.opponent_output), opponent_rows, args.riot_id, args.queue)
     write_player_stats(Path(args.output), rows)
-    write_player_stats(Path(args.opponent_output), finalize_stats(opponent_aggregates))
+    write_player_stats(Path(args.opponent_output), opponent_rows)
     return 0
 
 
@@ -98,6 +103,18 @@ def write_player_stats(output_path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
     print(f"Wrote {len(rows)} player-champion-role rows to {output_path}")
+
+
+def preserve_other_stats(path, rows, profiles, queues):
+    if not path.is_file():
+        return rows
+    selected = {name.casefold() for name in profiles}
+    with path.open(encoding="utf-8", newline="") as file:
+        for row in csv.DictReader(file):
+            queue = int(row.get("queue_id") or 420)
+            if str(row.get("riot_id") or row.get("player")).casefold() not in selected or queue not in queues:
+                rows.append({**row, "queue_id": queue})
+    return rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -146,6 +163,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--matches-dir", default="data/raw/matches", help="Shared raw match cache. Default: data/raw/matches")
     parser.add_argument("--opponent-output", default="data/processed/player_enemy_champion_role_stats.csv", help="Output for personal results against enemy champions, used by offline ban recommendations.")
     parser.add_argument("--cached-only", action="store_true", help="Rebuild only enemy matchup stats from cached matches using participant Riot IDs; no API key or network needed.")
+    parser.add_argument("--incremental", action="store_true", help="Add new games until a cached personal game is reached, and rebuild totals from all cached games for selected profiles/queues.")
     parser.add_argument(
         "--language",
         default="en_US",
@@ -179,19 +197,47 @@ def collect_player_stats(
     download_workers: str = "1",
     matches_dir: Path | None = None,
     opponent_aggregates: dict | None = None,
+    incremental: bool = False,
 ) -> list[dict[str, Any]]:
     aggregates: dict[tuple[str, int, str, int], dict[str, Any]] = {}
     if matches_dir is not None:
         matches_dir.mkdir(parents=True, exist_ok=True)
 
+    accounts = {}
+    if incremental:
+        if matches_dir is None:
+            raise ValueError("Incremental collection requires a match cache")
+        for riot_id in riot_ids:
+            name, tag = parse_riot_id(riot_id)
+            accounts[riot_id] = client.account_by_riot_id(name, tag, region)
+        known = {str(account["puuid"]): {} for account in accounts.values()}
+        print("Indexing cached personal matches...", flush=True)
+        for scanned, path in enumerate(matches_dir.glob("*.json"), start=1):
+            if scanned % 5000 == 0:
+                print(f"  Scanned {scanned} cached matches", flush=True)
+            try:
+                match = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            info = match.get("info", {})
+            queue_id = info.get("queueId")
+            if queue_id not in (420, 440):
+                continue
+            for participant in info.get("participants", []):
+                puuid = str(participant.get("puuid"))
+                if puuid in known:
+                    known[puuid].setdefault(queue_id, set()).add(path.stem)
+        print(f"  Indexed {sum(len(ids) for queues in known.values() for ids in queues.values())} personal match records", flush=True)
+
     for index, riot_id in enumerate(riot_ids, start=1):
         game_name, tag_line = parse_riot_id(riot_id)
-        account = client.account_by_riot_id(game_name, tag_line, region)
+        account = accounts[riot_id] if incremental else client.account_by_riot_id(game_name, tag_line, region)
         puuid = str(account["puuid"])
         time.sleep(sleep_seconds)
         match_ids = []
         for queue_id in dict.fromkeys([queue] if isinstance(queue, int) else queue):
             ids = []
+            existing = known[puuid].get(queue_id, set()) if incremental else set()
             for start in range(0, matches_per_player, 100):
                 count = min(100, matches_per_player - start)
                 page = client.match_ids_by_puuid(
@@ -204,8 +250,13 @@ def collect_player_stats(
                 )
                 ids.extend(page)
                 time.sleep(sleep_seconds)
+                if existing.intersection(page):
+                    print(f"  queue {queue_id}: reached cached history", flush=True)
+                    break
                 if len(page) < count:
                     break
+            if incremental:
+                ids = list(dict.fromkeys([*ids, *sorted(existing)]))
             match_ids.extend(ids)
             print(f"  queue {queue_id}: {len(ids)} matches", flush=True)
         match_ids = list(dict.fromkeys(match_ids))

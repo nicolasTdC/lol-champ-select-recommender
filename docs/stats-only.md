@@ -1,5 +1,13 @@
 # Offline Player Recommendations
 
+## Local Web UI
+
+```bash
+python3 watch.py --web --port 8765
+```
+
+Open `http://localhost:8765`. Select profiles, ranked queue, and lane; the page shows All Lanes and the selected lane together. Recommended, Not Recommended, and Bans views include complete rankings with Show 20 more / Show all controls and champion search. Refresh reloads the CSVs. Champion portraits use Data Dragon when available. No League client, model, or API key is needed to view saved stats. A busy port automatically advances to the next free port.
+
 Run without a League client connection, API key, or model checkpoint:
 
 ```bash
@@ -29,6 +37,14 @@ python3 watch.py --stats-only --ranked-queue flex
 ```
 
 The collector defaults to both queues. Use `--queue 420` or `--queue 440` to collect only one. New CSVs preserve `queue_id` per row; legacy CSVs without that column are treated as Solo/Duo. Collection replaces the stats CSV with the requested sample, so collect both queues to retain both views.
+
+Add `--incremental` to preserve historical games and fetch new IDs until a cached game is reached:
+
+```bash
+python3 collect_player_stats.py --incremental --riot-id "NICKNINJA#BR1" --riot-id "kakashi2003#BR1" --riot-id "XXNAGATO1234#BR1" --riot-id "XXXMADARA123#BR1" --queue 420 440 --matches-per-player 1000
+```
+
+Incremental mode indexes `data/raw/matches` by account PUUID, unions new IDs with existing personal games, and rebuilds totals so overlap is not double-counted. It preserves CSV rows for unrequested profiles and queues. Keep the raw cache: historical CSV aggregates alone cannot identify duplicate games. All matching cached games (including corpus matches) enter the selected profiles' totals. If no known game is reached, pagination continues up to the requested limit. Without `--incremental`, the collector still replaces the selected dataset with the requested recent sample.
 
 `--matches-per-player` accepts any positive count, including 1000. Match IDs are fetched in pages of at most 100 for each queue; collection stops early if fewer games are available.
 

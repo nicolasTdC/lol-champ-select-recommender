@@ -25,3 +25,6 @@ train = ["numpy>=1.26", "torch>=2.3", "tqdm>=4.66"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+lol_champ_select_recommender = ["stats_ui.html"]
