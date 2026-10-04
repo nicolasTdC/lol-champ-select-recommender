@@ -24,7 +24,32 @@ def main() -> int:
         print("Error: pass at least one --riot-id", file=sys.stderr)
         return 1
 
+    if args.cached_only:
+        from types import SimpleNamespace
+
+        aggregates = {}
+        profiles = {name.casefold(): name for name in args.riot_id}
+        static = SimpleNamespace(champion_name=lambda cid: str(cid), champion_key=lambda cid: None)
+        for path in Path(args.matches_dir).glob("*.json"):
+            try:
+                match = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if match.get("info", {}).get("queueId") not in args.queue:
+                continue
+            for participant in match.get("info", {}).get("participants", []):
+                name = f"{participant.get('riotIdGameName', '')}#{participant.get('riotIdTagline', '')}"
+                if name.casefold() in profiles and participant.get("puuid"):
+                    accumulate_opponents(aggregates, match, participant["puuid"], profiles[name.casefold()], static)
+        rows = finalize_stats(aggregates)
+        if not rows:
+            print("Error: no cached ranked matches matched these Riot IDs; collect their games first.", file=sys.stderr)
+            return 1
+        write_player_stats(Path(args.opponent_output), rows)
+        return 0
+
     try:
+        opponent_aggregates = {}
         resolve_download_workers(args.download_workers, 1)
         client = RiotApiClient(api_key=riot_api_key(), request_rate_limit=args.request_rate_limit, log_rate_limits=True)
         static_data = load_static_data(args.language)
@@ -39,12 +64,18 @@ def main() -> int:
             sleep_seconds=args.sleep,
             download_workers=args.download_workers,
             matches_dir=Path(args.matches_dir),
+            opponent_aggregates=opponent_aggregates,
         )
     except (KeyError, RuntimeError, RiotApiError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    output_path = Path(args.output)
+    write_player_stats(Path(args.output), rows)
+    write_player_stats(Path(args.opponent_output), finalize_stats(opponent_aggregates))
+    return 0
+
+
+def write_player_stats(output_path: Path, rows: list[dict[str, Any]]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(
@@ -67,7 +98,6 @@ def main() -> int:
         writer.writerows(rows)
 
     print(f"Wrote {len(rows)} player-champion-role rows to {output_path}")
-    return 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,6 +144,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--download-workers", default="auto", help="Concurrent downloads: auto or a positive integer. Default: auto (up to 8)")
     parser.add_argument("--request-rate-limit", type=float, default=5.0, help="Shared requests/sec limit; 0 disables pacing. Default: 5.0")
     parser.add_argument("--matches-dir", default="data/raw/matches", help="Shared raw match cache. Default: data/raw/matches")
+    parser.add_argument("--opponent-output", default="data/processed/player_enemy_champion_role_stats.csv", help="Output for personal results against enemy champions, used by offline ban recommendations.")
+    parser.add_argument("--cached-only", action="store_true", help="Rebuild only enemy matchup stats from cached matches using participant Riot IDs; no API key or network needed.")
     parser.add_argument(
         "--language",
         default="en_US",
@@ -146,6 +178,7 @@ def collect_player_stats(
     sleep_seconds: float,
     download_workers: str = "1",
     matches_dir: Path | None = None,
+    opponent_aggregates: dict | None = None,
 ) -> list[dict[str, Any]]:
     aggregates: dict[tuple[str, int, str, int], dict[str, Any]] = {}
     if matches_dir is not None:
@@ -198,6 +231,8 @@ def collect_player_stats(
                     else:
                         downloaded += 1
                     _accumulate_player_match(aggregates, match, puuid, riot_id, static_data)
+                    if opponent_aggregates is not None:
+                        accumulate_opponents(opponent_aggregates, match, puuid, riot_id, static_data)
                 except (RiotApiError, OSError, ValueError) as exc:
                     errors += 1
                     print(f"  error {match_id}: {exc}", file=sys.stderr)
@@ -205,6 +240,10 @@ def collect_player_stats(
                     print(f"  [match {completed}/{len(match_ids)}] downloaded={downloaded} cached={cached} errors={errors} elapsed={time.monotonic() - started:.0f}s", flush=True)
         print(f"  Finished: {downloaded} downloaded, {cached} cached, {errors} errors, {time.monotonic() - started:.0f}s", flush=True)
 
+    return finalize_stats(aggregates)
+
+
+def finalize_stats(aggregates: dict) -> list[dict[str, Any]]:
     rows = [
         {
             **row,
@@ -213,6 +252,28 @@ def collect_player_stats(
         for row in aggregates.values()
     ]
     return sorted(rows, key=lambda row: (row["player"], row["champion_name"], row["role"], row["queue_id"]))
+
+
+def accumulate_opponents(aggregates, match, puuid, riot_id, static_data):
+    participants = match.get("info", {}).get("participants", [])
+    player = next((p for p in participants if str(p.get("puuid")) == puuid), None)
+    if player is None or player.get("teamId") is None:
+        return
+    for enemy in participants:
+        if enemy.get("teamId") is None or enemy["teamId"] == player["teamId"] or not enemy.get("puuid"):
+            continue
+        # Record the profile's outcome against each opponent, using the enemy's role.
+        enemy_match = {
+            **match,
+            "info": {
+                **match["info"],
+                "participants": [
+                    {**p, "win": bool(player.get("win"))} if p is enemy else p
+                    for p in participants
+                ],
+            },
+        }
+        _accumulate_player_match(aggregates, enemy_match, str(enemy["puuid"]), riot_id, static_data)
 
 
 def _load_match(client, match_id, region, matches_dir, sleep_seconds):

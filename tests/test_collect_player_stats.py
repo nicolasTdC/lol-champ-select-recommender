@@ -3,10 +3,23 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from lol_champ_select_recommender.collect_player_stats import collect_player_stats, _load_match
+from lol_champ_select_recommender.collect_player_stats import collect_player_stats, _load_match, accumulate_opponents
 
 
 class CollectPlayerStatsTest(unittest.TestCase):
+    def test_enemy_stats_record_personal_outcome_and_exclude_allies(self):
+        player = {"puuid": "me", "teamId": 100, "participantId": 1, "championId": 1, "win": False}
+        ally = {"puuid": "ally", "teamId": 100, "participantId": 2, "championId": 2, "win": False}
+        enemy = {"puuid": "enemy", "teamId": 200, "participantId": 6, "championId": 3, "win": True}
+        match = {"info": {"queueId": 440, "participants": [player, ally, enemy]}}
+        aggregates = {}
+        with patch("lol_champ_select_recommender.collect_player_stats._participant_roles", return_value={1: "top", 2: "middle", 6: "utility"}):
+            accumulate_opponents(aggregates, match, "me", "Alice#BR1", Mock())
+        self.assertEqual(list(aggregates), [("Alice#BR1", 3, "utility", 440)])
+        row = next(iter(aggregates.values()))
+        self.assertEqual((row["games"], row["wins"], row["losses"]), (1, 0, 1))
+        self.assertTrue(enemy["win"])
+
     def test_concurrent_downloads_are_cached_and_reused(self):
         from concurrent.futures import ThreadPoolExecutor
 

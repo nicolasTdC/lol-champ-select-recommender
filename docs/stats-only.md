@@ -47,3 +47,18 @@ Soft requires 20+ games and 52%+ win rate overall. Hard also requires those thre
 Lists rank by game count descending, then historical win rate; zero-game entries come last. Displayed percentages are historical win rates. Champion features supply the champion catalog and names; if unavailable, the catalog falls back to champions present in the stats CSV.
 
 The Not Recommended section lists the exact complement of each recommendation filter using the same profiles, queue, sorting, and list limit. Strict complements include champions with fewer than 20 games or win rate below 52%. Extrapolated complements include champions with 20+ games below 52% WR, or fewer than 20 games with at least 10 losses. Hard complements reject if either the overall or role condition fails. Whitelisted complements also include champions excluded by the blacklist. These are complements of the rules, not of the displayed top-N lists; insufficient data in a strict complement does not mean a champion is proven bad.
+
+## Offline Bans
+
+The collector also writes `data/processed/player_enemy_champion_role_stats.csv`. Each encounter records your profile's win/loss against an enemy champion, grouped by the enemy's role and queue. These are your outcomes against champions, not enemy account mastery or win rates. A match contributes one encounter for each enemy; multiple selected profiles in the same match contribute separate profile encounters.
+
+Offline mode automatically shows Ban Recommendations with the same profile and queue filters. Soft flags personal WR below 52% over 20+ encounters. Hard also flags poor performance against that enemy role. Extrapolated variants additionally flag fewer than 20 encounters with at least 10 losses. Unseen champions and insufficient samples alone do not qualify. Bans sort by encounters descending, then personal WR ascending, and ignore the pick blacklist.
+
+Rebuild enemy stats from all matching cached ranked matches without API requests:
+
+```bash
+python3 collect_player_stats.py --cached-only --riot-id "NICKNINJA#BR1" --riot-id "kakashi2003#BR1" --riot-id "XXNAGATO1234#BR1" --riot-id "XXXMADARA123#BR1" --queue 420 440
+python3 watch.py --stats-only --ranked-queue all
+```
+
+Cached-only rebuilding matches participant Riot IDs stored in the raw files, so games under previous account names may not be included. It uses all matching cache files, rather than the latest-N limit, and leaves your pick stats CSV intact. Override `--opponent-output` during collection and `--opponent-stats` during offline display to use another path.
