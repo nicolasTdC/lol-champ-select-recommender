@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import concurrent.futures
+import json
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 from .aggregate_matches import _participant_roles, _as_int
+from .collect_ranked_matches import download_match, resolve_download_workers
 from .ddragon import load_static_data
 from .env import riot_api_key
 from .riot_api import RiotApiClient, RiotApiError, parse_riot_id
@@ -22,7 +25,8 @@ def main() -> int:
         return 1
 
     try:
-        client = RiotApiClient(api_key=riot_api_key(), log_rate_limits=True)
+        resolve_download_workers(args.download_workers, 1)
+        client = RiotApiClient(api_key=riot_api_key(), request_rate_limit=args.request_rate_limit, log_rate_limits=True)
         static_data = load_static_data(args.language)
         rows = collect_player_stats(
             client,
@@ -33,6 +37,8 @@ def main() -> int:
             match_type=args.match_type,
             matches_per_player=args.matches_per_player,
             sleep_seconds=args.sleep,
+            download_workers=args.download_workers,
+            matches_dir=Path(args.matches_dir),
         )
     except (KeyError, RuntimeError, RiotApiError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -102,9 +108,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sleep",
         type=float,
-        default=0.05,
-        help="Seconds to sleep between Riot requests. Default: 0.05",
+        default=0,
+        help="Extra delay between requests per worker. Default: 0 (shared limiter controls pacing)",
     )
+    parser.add_argument("--download-workers", default="auto", help="Concurrent downloads: auto or a positive integer. Default: auto (up to 8)")
+    parser.add_argument("--request-rate-limit", type=float, default=5.0, help="Shared requests/sec limit; 0 disables pacing. Default: 5.0")
+    parser.add_argument("--matches-dir", default="data/raw/matches", help="Shared raw match cache. Default: data/raw/matches")
     parser.add_argument(
         "--language",
         default="en_US",
@@ -135,8 +144,12 @@ def collect_player_stats(
     match_type: str | None,
     matches_per_player: int,
     sleep_seconds: float,
+    download_workers: str = "1",
+    matches_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     aggregates: dict[tuple[str, int, str, int], dict[str, Any]] = {}
+    if matches_dir is not None:
+        matches_dir.mkdir(parents=True, exist_ok=True)
 
     for index, riot_id in enumerate(riot_ids, start=1):
         game_name, tag_line = parse_riot_id(riot_id)
@@ -167,26 +180,30 @@ def collect_player_stats(
         print(f"[player {index:>3}/{len(riot_ids)}] {game_name}#{tag_line} -> {len(match_ids)} matches", flush=True)
         started = time.monotonic()
         downloaded = 0
+        cached = 0
         errors = 0
-        for match_number, match_id in enumerate(match_ids, start=1):
-            if match_number == 1 or match_number % 10 == 0:
-                elapsed = time.monotonic() - started
-                print(
-                    f"  [match {match_number}/{len(match_ids)}] fetching {match_id} "
-                    f"| downloaded={downloaded} errors={errors} elapsed={elapsed:.0f}s",
-                    flush=True,
-                )
-            try:
-                match = client.match_by_id(match_id, region)
-            except RiotApiError as exc:
-                errors += 1
-                print(f"  error {match_id}: {exc}", file=sys.stderr)
-                continue
-
-            downloaded += 1
-            _accumulate_player_match(aggregates, match, puuid, riot_id, static_data)
-            time.sleep(sleep_seconds)
-        print(f"  Finished: {downloaded} downloaded, {errors} errors, {time.monotonic() - started:.0f}s", flush=True)
+        workers = resolve_download_workers(download_workers, len(match_ids))
+        print(f"  Download workers: {workers}", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_load_match, client, match_id, region, matches_dir, sleep_seconds): match_id
+                for match_id in match_ids
+            }
+            for completed, future in enumerate(concurrent.futures.as_completed(futures), start=1):
+                match_id = futures[future]
+                try:
+                    match, status = future.result()
+                    if status == "existing":
+                        cached += 1
+                    else:
+                        downloaded += 1
+                    _accumulate_player_match(aggregates, match, puuid, riot_id, static_data)
+                except (RiotApiError, OSError, ValueError) as exc:
+                    errors += 1
+                    print(f"  error {match_id}: {exc}", file=sys.stderr)
+                if completed == 1 or completed % 10 == 0 or completed == len(match_ids):
+                    print(f"  [match {completed}/{len(match_ids)}] downloaded={downloaded} cached={cached} errors={errors} elapsed={time.monotonic() - started:.0f}s", flush=True)
+        print(f"  Finished: {downloaded} downloaded, {cached} cached, {errors} errors, {time.monotonic() - started:.0f}s", flush=True)
 
     rows = [
         {
@@ -196,6 +213,20 @@ def collect_player_stats(
         for row in aggregates.values()
     ]
     return sorted(rows, key=lambda row: (row["player"], row["champion_name"], row["role"], row["queue_id"]))
+
+
+def _load_match(client, match_id, region, matches_dir, sleep_seconds):
+    if matches_dir is None:
+        match = client.match_by_id(match_id, region)
+        time.sleep(sleep_seconds)
+        return match, "downloaded"
+    path = matches_dir / f"{match_id}.json"
+    status, error = download_match(client, match_id, region, path, force=False)
+    if error:
+        raise RiotApiError(error)
+    if status == "downloaded":
+        time.sleep(sleep_seconds)
+    return json.loads(path.read_text(encoding="utf-8")), status
 
 
 def _accumulate_player_match(

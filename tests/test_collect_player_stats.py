@@ -1,10 +1,29 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from lol_champ_select_recommender.collect_player_stats import collect_player_stats
+from lol_champ_select_recommender.collect_player_stats import collect_player_stats, _load_match
 
 
 class CollectPlayerStatsTest(unittest.TestCase):
+    def test_concurrent_downloads_are_cached_and_reused(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        client = Mock()
+        client.match_by_id.side_effect = lambda match_id, region: {"metadata": {"matchId": match_id}, "info": {"queueId": 420}}
+        with TemporaryDirectory() as directory:
+            cache = Path(directory)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(_load_match, client, mid, "americas", cache, 0) for mid in ("BR1_1", "BR1_2")]
+                results = [future.result() for future in futures]
+            self.assertEqual({match["metadata"]["matchId"] for match, _ in results}, {"BR1_1", "BR1_2"})
+            self.assertTrue(all(status == "downloaded" for _, status in results))
+            match, status = _load_match(client, "BR1_1", "americas", cache, 0)
+            self.assertEqual(status, "existing")
+            self.assertEqual(match["metadata"]["matchId"], "BR1_1")
+            self.assertEqual(client.match_by_id.call_count, 2)
+
     def test_paginates_each_queue_and_stops_at_short_page(self):
         client = Mock()
         client.account_by_riot_id.return_value = {"puuid": "player"}

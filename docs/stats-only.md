@@ -32,7 +32,15 @@ The collector defaults to both queues. Use `--queue 420` or `--queue 440` to col
 
 `--matches-per-player` accepts any positive count, including 1000. Match IDs are fetched in pages of at most 100 for each queue; collection stops early if fewer games are available.
 
-The sample uses recent available matches without a patch or season filter. Match downloads run sequentially; progress prints on the first match and every tenth match, with elapsed time and error counts. Rate-limit responses and retry waits are logged automatically.
+The sample uses recent available matches without a patch or season filter. Match downloads use auto workers (up to 8), a shared rate limiter, and the corpus cache at `data/raw/matches`. Cached matches avoid new detail requests, including matches shared by multiple profiles. Progress shows downloaded, cached, and failed matches; rate-limit retries are logged automatically.
+
+Optional collection controls:
+
+```bash
+python3 collect_player_stats.py --riot-id "NICKNINJA#BR1" --queue 420 440 --matches-per-player 1000 --download-workers auto --request-rate-limit 5 --matches-dir data/raw/matches --sleep 0
+```
+
+Use `--download-workers 1` for sequential downloads or another positive integer for explicit concurrency. `--request-rate-limit 0` disables local pacing; Riot's rate-limit retries still apply.
 
 Soft requires 20+ games and 52%+ win rate overall. Hard also requires those thresholds in the listed role. Extrapolated variants allow fewer than 20 games if losses are below 9.6, including zero games. Whitelisted variants apply the global and role-specific blacklist.
 
