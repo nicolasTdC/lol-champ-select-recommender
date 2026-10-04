@@ -5,6 +5,23 @@ from lol_champ_select_recommender.collect_player_stats import collect_player_sta
 
 
 class CollectPlayerStatsTest(unittest.TestCase):
+    def test_paginates_each_queue_and_stops_at_short_page(self):
+        client = Mock()
+        client.account_by_riot_id.return_value = {"puuid": "player"}
+        client.match_ids_by_puuid.side_effect = [
+            [f"solo{i}" for i in range(100)],
+            [f"solo{i}" for i in range(100, 200)],
+            ["solo200"],
+            [],
+        ]
+        client.match_by_id.return_value = {"info": {"queueId": 420, "participants": []}}
+        collect_player_stats(client, Mock(), riot_ids=["Alice#BR1"], region="americas", queue=[420, 440], match_type="ranked", matches_per_player=250, sleep_seconds=0)
+        self.assertEqual(
+            [(call.kwargs["queue"], call.kwargs["start"], call.kwargs["count"]) for call in client.match_ids_by_puuid.call_args_list],
+            [(420, 0, 100), (420, 100, 100), (420, 200, 50), (440, 0, 100)],
+        )
+        self.assertEqual(client.match_by_id.call_count, 201)
+
     def test_collects_both_queues_without_merging_queue_rows(self):
         client = Mock()
         client.account_by_riot_id.return_value = {"puuid": "player"}

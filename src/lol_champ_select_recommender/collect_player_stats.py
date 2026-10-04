@@ -94,11 +94,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--matches-per-player",
-        type=int,
+        type=positive_int,
         default=100,
-        choices=range(1, 101),
-        metavar="[1-100]",
-        help="Recent matches to request per player per queue. Default: 100",
+        metavar="N",
+        help="Recent matches per player per queue, paginated in batches of 100. Default: 100",
     )
     parser.add_argument(
         "--sleep",
@@ -117,6 +116,13 @@ def parse_args() -> argparse.Namespace:
         help="Output CSV path. Default: data/processed/player_champion_role_stats.csv",
     )
     return parser.parse_args()
+
+
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
 
 
 def collect_player_stats(
@@ -139,16 +145,23 @@ def collect_player_stats(
         time.sleep(sleep_seconds)
         match_ids = []
         for queue_id in dict.fromkeys([queue] if isinstance(queue, int) else queue):
-            ids = client.match_ids_by_puuid(
-                puuid,
-                region,
-                count=matches_per_player,
-                queue=queue_id,
-                match_type=match_type,
-            )
+            ids = []
+            for start in range(0, matches_per_player, 100):
+                count = min(100, matches_per_player - start)
+                page = client.match_ids_by_puuid(
+                    puuid,
+                    region,
+                    start=start,
+                    count=count,
+                    queue=queue_id,
+                    match_type=match_type,
+                )
+                ids.extend(page)
+                time.sleep(sleep_seconds)
+                if len(page) < count:
+                    break
             match_ids.extend(ids)
             print(f"  queue {queue_id}: {len(ids)} matches")
-            time.sleep(sleep_seconds)
         match_ids = list(dict.fromkeys(match_ids))
 
         print(f"[player {index:>3}/{len(riot_ids)}] {game_name}#{tag_line} -> {len(match_ids)} matches")
