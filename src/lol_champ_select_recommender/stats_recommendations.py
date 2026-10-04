@@ -19,9 +19,9 @@ def run_stats_only(args) -> int:
     if args.recommendation_count < 1:
         print("Error: --recommendation-count must be positive.", file=sys.stderr)
         return 1
-    index = load_player_prune_index(args.player_stats, profiles=args.profiles)
+    index = load_player_prune_index(args.player_stats, profiles=args.profiles, ranked_queue=args.ranked_queue)
     if index is None or not index.overall_by_champion:
-        print(f"Error: no player stats found for the selected profiles in {args.player_stats}.", file=sys.stderr)
+        print(f"Error: no player stats found for the selected profiles/queue ({args.ranked_queue}) in {args.player_stats}. Refresh the CSV with the requested queues.", file=sys.stderr)
         return 1
 
     features = {}
@@ -45,6 +45,7 @@ def run_stats_only(args) -> int:
         "Player Stats Recommendations",
         f"Profiles: {', '.join(args.profiles) if args.profiles else 'all profiles in CSV'} (combined)",
         f"Source: {args.player_stats}",
+        f"Ranked queue: {args.ranked_queue}",
         f"Soft: {MIN_GAMES}+ games and {MIN_WIN_RATE:.0%}+ WR across all roles",
         "Hard: Soft plus the same threshold in the listed role",
         f"Extrapolated: also allow <{MIN_GAMES} games with losses <{MAX_LOSSES_FOR_LOW_SAMPLE:g}; includes zero games",

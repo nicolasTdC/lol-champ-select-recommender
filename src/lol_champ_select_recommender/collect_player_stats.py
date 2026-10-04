@@ -21,10 +21,9 @@ def main() -> int:
         print("Error: pass at least one --riot-id", file=sys.stderr)
         return 1
 
-    static_data = load_static_data(args.language)
-    client = RiotApiClient(api_key=riot_api_key())
-
     try:
+        client = RiotApiClient(api_key=riot_api_key())
+        static_data = load_static_data(args.language)
         rows = collect_player_stats(
             client,
             static_data,
@@ -51,6 +50,7 @@ def main() -> int:
                 "champion_name",
                 "role",
                 "role_name",
+                "queue_id",
                 "games",
                 "wins",
                 "losses",
@@ -81,8 +81,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--queue",
         type=int,
-        default=420,
-        help="Match queue ID to sample. Default: 420",
+        nargs="+",
+        choices=[420, 440],
+        default=[420, 440],
+        help="Ranked queues to sample: 420 Solo/Duo, 440 Flex. Default: both.",
     )
     parser.add_argument(
         "--match-type",
@@ -96,7 +98,7 @@ def parse_args() -> argparse.Namespace:
         default=100,
         choices=range(1, 101),
         metavar="[1-100]",
-        help="Recent matches to request per player. Default: 50",
+        help="Recent matches to request per player per queue. Default: 100",
     )
     parser.add_argument(
         "--sleep",
@@ -123,26 +125,31 @@ def collect_player_stats(
     *,
     riot_ids: list[str],
     region: str,
-    queue: int,
+    queue: int | list[int],
     match_type: str | None,
     matches_per_player: int,
     sleep_seconds: float,
 ) -> list[dict[str, Any]]:
-    aggregates: dict[tuple[str, int, str], dict[str, Any]] = {}
+    aggregates: dict[tuple[str, int, str, int], dict[str, Any]] = {}
 
     for index, riot_id in enumerate(riot_ids, start=1):
         game_name, tag_line = parse_riot_id(riot_id)
         account = client.account_by_riot_id(game_name, tag_line, region)
         puuid = str(account["puuid"])
         time.sleep(sleep_seconds)
-        match_ids = client.match_ids_by_puuid(
-            puuid,
-            region,
-            count=matches_per_player,
-            queue=queue,
-            match_type=match_type,
-        )
-        time.sleep(sleep_seconds)
+        match_ids = []
+        for queue_id in dict.fromkeys([queue] if isinstance(queue, int) else queue):
+            ids = client.match_ids_by_puuid(
+                puuid,
+                region,
+                count=matches_per_player,
+                queue=queue_id,
+                match_type=match_type,
+            )
+            match_ids.extend(ids)
+            print(f"  queue {queue_id}: {len(ids)} matches")
+            time.sleep(sleep_seconds)
+        match_ids = list(dict.fromkeys(match_ids))
 
         print(f"[player {index:>3}/{len(riot_ids)}] {game_name}#{tag_line} -> {len(match_ids)} matches")
         for match_id in match_ids:
@@ -162,11 +169,11 @@ def collect_player_stats(
         }
         for row in aggregates.values()
     ]
-    return sorted(rows, key=lambda row: (row["player"], row["champion_name"], row["role"]))
+    return sorted(rows, key=lambda row: (row["player"], row["champion_name"], row["role"], row["queue_id"]))
 
 
 def _accumulate_player_match(
-    aggregates: dict[tuple[str, int, str], dict[str, Any]],
+    aggregates: dict[tuple[str, int, str, int], dict[str, Any]],
     match: dict[str, Any],
     puuid: str,
     riot_id: str,
@@ -174,6 +181,9 @@ def _accumulate_player_match(
 ) -> None:
     info = match.get("info", {})
     if not isinstance(info, dict):
+        return
+    queue_id = _as_int(info.get("queueId"))
+    if queue_id not in (420, 440):
         return
 
     participants = [participant for participant in info.get("participants", []) if isinstance(participant, dict)]
@@ -191,7 +201,7 @@ def _accumulate_player_match(
         if not role:
             return
 
-        key = (riot_id, champion_id, role)
+        key = (riot_id, champion_id, role, queue_id)
         row = aggregates.setdefault(
             key,
             {
@@ -201,6 +211,7 @@ def _accumulate_player_match(
                 "champion_name": static_data.champion_name(champion_id),
                 "role": role,
                 "role_name": ROLE_NAMES.get(role, role),
+                "queue_id": queue_id,
                 "games": 0,
                 "wins": 0,
                 "losses": 0,

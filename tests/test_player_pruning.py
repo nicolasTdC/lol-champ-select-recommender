@@ -13,6 +13,23 @@ from lol_champ_select_recommender.modeling.player_pruning import (
 
 
 class PlayerPruningTest(unittest.TestCase):
+    def test_queue_filter_and_legacy_solo_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stats.csv"
+            path.write_text(
+                "player,champion_id,role,queue_id,games,wins,losses\n"
+                "alice,1,middle,420,20,12,8\n"
+                "alice,1,middle,440,30,10,20\n"
+                "alice,1,middle,450,100,100,0\n"
+            )
+            for mode, games, wins in (("all", 50, 22), ("soloduo", 20, 12), ("flex", 30, 10)):
+                index = load_player_prune_index(path, ranked_queue=mode)
+                self.assertEqual(index.overall_stats(1).games, games)
+                self.assertEqual(index.role_stats(1, "middle").wins, wins)
+            path.write_text("player,champion_id,role,games,wins,losses\nalice,1,middle,20,12,8\n")
+            self.assertEqual(load_player_prune_index(path, ranked_queue="soloduo").overall_stats(1).games, 20)
+            self.assertEqual(load_player_prune_index(path, ranked_queue="flex").overall_by_champion, {})
+
     def test_prune_rules_use_soft_and_hard_thresholds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "player_stats.csv"

@@ -79,7 +79,8 @@ class PlayerPruneIndex:
         return sorted(rows, key=lambda item: (item[1].losses, -item[1].win_rate, -item[1].games, item[0]))
 
 
-def load_player_prune_index(path: str | Path, *, profiles: list[str] | None = None) -> PlayerPruneIndex | None:
+def load_player_prune_index(path: str | Path, *, profiles: list[str] | None = None, ranked_queue: str = "all") -> PlayerPruneIndex | None:
+    queues = {"all": {420, 440}, "soloduo": {420}, "flex": {440}}[ranked_queue]
     prune_path = Path(path)
     if not prune_path.is_file():
         return None
@@ -95,6 +96,10 @@ def load_player_prune_index(path: str | Path, *, profiles: list[str] | None = No
     role_totals: dict[str, list[int]] = {}
 
     for row in rows:
+        # Legacy personal stats were collected from Solo/Duo only.
+        queue_id = _as_int(row.get("queue_id")) if "queue_id" in row else 420
+        if queue_id not in queues:
+            continue
         if profiles and not {str(row.get(key, "")).casefold() for key in ("player", "riot_id")}.intersection(
             profile.casefold() for profile in profiles
         ):

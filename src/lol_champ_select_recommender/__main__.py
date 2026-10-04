@@ -105,6 +105,7 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Watch live League champion select in the terminal.")
     parser.add_argument("--stats-only", action="store_true", help="Show player-stat recommendations offline and exit; no client or model required.")
+    parser.add_argument("--ranked-queue", choices=["all", "soloduo", "flex"], default="all", help="Queue filter for --stats-only. Default: all ranked.")
     parser.add_argument("--profiles", nargs="+", help="Player names or Riot IDs to include in --stats-only. Default: all profiles in --player-stats.")
     parser.add_argument(
         "--lockfile",
