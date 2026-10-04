@@ -46,6 +46,8 @@ Soft requires 20+ games and 52%+ win rate overall. Hard also requires those thre
 
 Recommended and Not Recommended each print Soft variants once under All Lanes, and Hard variants under each lane. All Lanes whitelisted lists apply only global blacklist entries; per-lane whitelisted Hard lists also apply that lane's blacklist.
 
+The Lane section also shows Not Recommended Hard and Soft lists, each the exact complement of its lane recommendation rule. Hard rejects fewer than 20 games or WR below 52%. Lane Soft accepts only the low-sample group (fewer than 20 games and losses below 9.6), so its complement includes all lanes with 20+ games, even successful ones. Rejected lanes sort by games descending, then WR ascending.
+
 Lists rank by game count descending, then historical win rate; zero-game entries come last. Displayed percentages are historical win rates. Champion features supply the champion catalog and names; if unavailable, the catalog falls back to champions present in the stats CSV.
 
 The Not Recommended section lists the exact complement of each recommendation filter using the same profiles, queue, sorting, and list limit. Strict complements include champions with fewer than 20 games or win rate below 52%. Extrapolated complements include champions with 20+ games below 52% WR, or fewer than 20 games with at least 10 losses. Hard complements reject if either the overall or role condition fails. Whitelisted complements also include champions excluded by the blacklist. These are complements of the rules, not of the displayed top-N lists; insufficient data in a strict complement does not mean a champion is proven bad.

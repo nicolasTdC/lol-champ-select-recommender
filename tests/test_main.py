@@ -30,6 +30,14 @@ class MainTest(unittest.TestCase):
             model.assert_not_called()
             self.assertIn("Annie: 20 games, 12W/8L, WR 60.0%", output.getvalue())
             self.assertNotIn("100 games", output.getvalue())
+            lane_rejections = output.getvalue().split("  Not Recommended\n", 1)[1].split("\nRecommended", 1)[0]
+            hard_lanes = lane_rejections.split("    Hard: ", 1)[1].split("\n", 1)[0]
+            soft_lanes = lane_rejections.split("    Soft: ", 1)[1].split("\n", 1)[0]
+            self.assertIn("Top (80 games", hard_lanes)
+            self.assertNotIn("Mid (", hard_lanes)
+            self.assertIn("Top (80 games", soft_lanes)
+            self.assertIn("Mid (20 games", soft_lanes)
+            self.assertNotIn("Jungle (", soft_lanes)
             soft_list = output.getvalue().split("  Soft:\n", 1)[1].split("  Extrapolated Soft:", 1)[0]
             self.assertLess(soft_list.index("Olaf:"), soft_list.index("Annie:"))
             recommended, rejected = output.getvalue().split("\nNot Recommended\n", 1)

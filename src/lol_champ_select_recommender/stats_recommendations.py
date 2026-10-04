@@ -56,6 +56,12 @@ def run_stats_only(args) -> int:
     ]
     for label, rows in (("Hard", index.hard_lane_recommendations()), ("Soft", index.soft_lane_recommendations())):
         lines.append(f"  {label}: " + ("; ".join(f"{ROLE_NAMES[role]} ({stats_text(stats)})" for role, stats in rows) or "-"))
+    lines.append("  Not Recommended")
+    for label, accepted in (("Hard", index.hard_lane_recommendations()), ("Soft", index.soft_lane_recommendations())):
+        accepted_roles = {role for role, _ in accepted}
+        rejected = [(role, index.by_role.get(role, zero)) for role in POSITION_ORDER if role not in accepted_roles]
+        rejected.sort(key=lambda row: (-row[1].games, row[1].win_rate, row[0]))
+        lines.append(f"    {label}: " + ("; ".join(f"{ROLE_NAMES[role]} ({stats_text(stats)})" for role, stats in rejected) or "-"))
 
     recommendation_start = len(lines)
     not_recommended = ["", "Not Recommended"]
