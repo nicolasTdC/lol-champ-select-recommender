@@ -98,11 +98,10 @@ def ban_recommendation_lines(args, features) -> list[str]:
         return lines + [f"  No enemy matchup stats for these profiles/queue. Refresh with collect_player_stats.py ({args.opponent_stats})."]
     lines.extend([
         "  WR is your profiles' win rate against the enemy champion; roles refer to the enemy's lane.",
-        "  Soft: 20+ encounters with personal WR below 52%; Hard: overall OR enemy-role stats fail that threshold with 20+ encounters.",
+        "  Soft: 20+ encounters with personal WR below 52% across all roles; Hard: the same rule using only the listed enemy role.",
         "  Extrapolated: also flag <20 encounters with losses >=10. Unseen champions are not ban candidates.",
         "  Ranked by encounters descending, then personal WR ascending; pick blacklists do not filter bans.",
     ])
-    zero = PruneStats(0, 0, 0)
 
     def poor(stats, extrapolated):
         if stats is None:
@@ -111,26 +110,19 @@ def ban_recommendation_lines(args, features) -> list[str]:
             return stats.win_rate < MIN_WIN_RATE
         return extrapolated and stats.losses >= MAX_LOSSES_FOR_LOW_SAMPLE
 
-    for role in POSITION_ORDER:
-        lines.extend(["", f"  {ROLE_NAMES[role]}"])
-        for label, role_specific, extrapolated in (
-            ("Soft", False, False), ("Hard", True, False),
-            ("Extrapolated Soft", False, True), ("Extrapolated Hard", True, True),
-        ):
-            kept = [cid for cid in index.overall_by_champion if
-                    poor(index.overall_stats(cid), extrapolated) or
-                    (role_specific and poor(index.role_stats(cid, role), extrapolated))]
-            def evidence(cid):
-                overall = index.overall_stats(cid) or zero
-                specific = index.role_stats(cid, role)
-                return specific if role_specific and poor(specific, extrapolated) else overall
-            kept.sort(key=lambda cid: (-evidence(cid).games, evidence(cid).win_rate, cid))
+    for role in (None, *POSITION_ORDER):
+        lines.extend(["", f"  {ROLE_NAMES[role] if role else 'All Roles'}"])
+        stats_by_champion = index.by_role_by_champion.get(role, {}) if role else index.overall_by_champion
+        base_label = "Hard" if role else "Soft"
+        for label, extrapolated in ((base_label, False), (f"Extrapolated {base_label}", True)):
+            kept = [cid for cid, stats in stats_by_champion.items() if poor(stats, extrapolated)]
+            kept.sort(key=lambda cid: (-stats_by_champion[cid].games, stats_by_champion[cid].win_rate, cid))
             lines.append(f"    {label}:")
             if not kept:
                 lines.append("      -")
             for cid in kept[:args.recommendation_count]:
-                stats = evidence(cid)
+                stats = stats_by_champion[cid]
                 name = features.get(cid, {}).get("champion_name", str(cid))
-                scope = "enemy role" if role_specific and poor(index.role_stats(cid, role), extrapolated) else "all roles"
+                scope = "enemy role" if role else "all roles"
                 lines.append(f"      {name}: {stats.games} games, {stats.wins}W/{stats.losses}L, personal WR {stats.win_rate:.1%} ({scope})")
     return lines

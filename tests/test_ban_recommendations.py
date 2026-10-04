@@ -20,10 +20,16 @@ class BanRecommendationsTest(unittest.TestCase):
             args = SimpleNamespace(opponent_stats=path, profiles=["alice"], ranked_queue="soloduo", recommendation_count=100)
             features = {cid: {"champion_name": f"Champ{cid}"} for cid in range(1, 6)}
             lines = "\n".join(ban_recommendation_lines(args, features))
-        soft = lines.split("    Soft:\n", 1)[1].split("    Hard:", 1)[0]
-        extrapolated = lines.split("    Extrapolated Soft:\n", 1)[1].split("    Extrapolated Hard:", 1)[0]
+        overall, roles = lines.split("\n  Top\n", 1)
+        soft = overall.split("    Soft:\n", 1)[1].split("    Extrapolated Soft:", 1)[0]
+        extrapolated = overall.split("    Extrapolated Soft:\n", 1)[1]
         self.assertIn("Champ1:", soft)
         self.assertNotIn("Champ2:", soft)
         self.assertIn("Champ2:", extrapolated)
+        top, other_roles = roles.split("\n  Jungle\n", 1)
+        self.assertIn("Champ1:", top)
+        self.assertIn("Champ2:", top)
+        self.assertNotIn("Champ1:", other_roles)
+        self.assertNotIn("Champ2:", other_roles)
         for name in ("Champ3:", "Champ4:", "Champ5:"):
             self.assertNotIn(name, lines)

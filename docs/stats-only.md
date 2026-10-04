@@ -52,7 +52,7 @@ The Not Recommended section lists the exact complement of each recommendation fi
 
 The collector also writes `data/processed/player_enemy_champion_role_stats.csv`. Each encounter records your profile's win/loss against an enemy champion, grouped by the enemy's role and queue. These are your outcomes against champions, not enemy account mastery or win rates. A match contributes one encounter for each enemy; multiple selected profiles in the same match contribute separate profile encounters.
 
-Offline mode automatically shows Ban Recommendations with the same profile and queue filters. Soft flags personal WR below 52% over 20+ encounters. Hard also flags poor performance against that enemy role. Extrapolated variants additionally flag fewer than 20 encounters with at least 10 losses. Unseen champions and insufficient samples alone do not qualify. Bans sort by encounters descending, then personal WR ascending, and ignore the pick blacklist.
+Offline mode automatically shows Ban Recommendations with the same profile and queue filters. All Roles shows Soft lists: personal WR below 52% over 20+ encounters. Each enemy lane shows Hard lists using only encounters against that champion in that lane, independently of overall results. Extrapolated variants additionally flag fewer than 20 encounters with at least 10 losses. Unseen champions and insufficient samples alone do not qualify. Bans sort by encounters descending, then personal WR ascending, and ignore the pick blacklist.
 
 Rebuild enemy stats from all matching cached ranked matches without API requests:
 
