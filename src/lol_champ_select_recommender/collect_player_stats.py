@@ -22,7 +22,7 @@ def main() -> int:
         return 1
 
     try:
-        client = RiotApiClient(api_key=riot_api_key())
+        client = RiotApiClient(api_key=riot_api_key(), log_rate_limits=True)
         static_data = load_static_data(args.language)
         rows = collect_player_stats(
             client,
@@ -161,19 +161,32 @@ def collect_player_stats(
                 if len(page) < count:
                     break
             match_ids.extend(ids)
-            print(f"  queue {queue_id}: {len(ids)} matches")
+            print(f"  queue {queue_id}: {len(ids)} matches", flush=True)
         match_ids = list(dict.fromkeys(match_ids))
 
-        print(f"[player {index:>3}/{len(riot_ids)}] {game_name}#{tag_line} -> {len(match_ids)} matches")
-        for match_id in match_ids:
+        print(f"[player {index:>3}/{len(riot_ids)}] {game_name}#{tag_line} -> {len(match_ids)} matches", flush=True)
+        started = time.monotonic()
+        downloaded = 0
+        errors = 0
+        for match_number, match_id in enumerate(match_ids, start=1):
+            if match_number == 1 or match_number % 10 == 0:
+                elapsed = time.monotonic() - started
+                print(
+                    f"  [match {match_number}/{len(match_ids)}] fetching {match_id} "
+                    f"| downloaded={downloaded} errors={errors} elapsed={elapsed:.0f}s",
+                    flush=True,
+                )
             try:
                 match = client.match_by_id(match_id, region)
             except RiotApiError as exc:
+                errors += 1
                 print(f"  error {match_id}: {exc}", file=sys.stderr)
                 continue
 
+            downloaded += 1
             _accumulate_player_match(aggregates, match, puuid, riot_id, static_data)
             time.sleep(sleep_seconds)
+        print(f"  Finished: {downloaded} downloaded, {errors} errors, {time.monotonic() - started:.0f}s", flush=True)
 
     rows = [
         {

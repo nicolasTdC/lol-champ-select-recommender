@@ -32,6 +32,8 @@ The collector defaults to both queues. Use `--queue 420` or `--queue 440` to col
 
 `--matches-per-player` accepts any positive count, including 1000. Match IDs are fetched in pages of at most 100 for each queue; collection stops early if fewer games are available.
 
+The sample uses recent available matches without a patch or season filter. Match downloads run sequentially; progress prints on the first match and every tenth match, with elapsed time and error counts. Rate-limit responses and retry waits are logged automatically.
+
 Soft requires 20+ games and 52%+ win rate overall. Hard also requires those thresholds in the listed role. Extrapolated variants allow fewer than 20 games if losses are below 9.6, including zero games. Whitelisted variants apply the global and role-specific blacklist.
 
 Lists rank by game count descending, then historical win rate; zero-game entries come last. Displayed percentages are historical win rates. Champion features supply the champion catalog and names; if unavailable, the catalog falls back to champions present in the stats CSV.
