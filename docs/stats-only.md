@@ -82,3 +82,15 @@ python3 watch.py --stats-only --ranked-queue all
 ```
 
 Cached-only rebuilding matches participant Riot IDs stored in the raw files, so games under previous account names may not be included. It uses all matching cache files, rather than the latest-N limit, and leaves your pick stats CSV intact. Override `--opponent-output` during collection and `--opponent-stats` during offline display to use another path.
+
+## ARAM
+
+ARAM is a separate queue filter in the web UI and terminal. It uses the same overall champion thresholds and expandable rankings, without lane recommendations or ban lists. All Ranked continues to include only Solo/Duo and Flex.
+
+```bash
+python3 collect_player_stats.py --incremental --riot-id "NICKNINJA#BR1" --riot-id "kakashi2003#BR1" --riot-id "XXNAGATO1234#BR1" --riot-id "XXXMADARA123#BR1" --queue 450 --matches-per-player 1000
+python3 watch.py --stats-only --ranked-queue aram
+python3 watch.py --web
+```
+
+Do not pass `--match-type ranked` for ARAM. The collector now defaults to no type filter because queue IDs determine the mode. Incremental ARAM collection preserves existing ranked stats. Global blacklist entries apply to ARAM; ranked lane-specific entries do not.

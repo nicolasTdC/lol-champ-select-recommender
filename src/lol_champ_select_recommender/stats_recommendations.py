@@ -63,10 +63,12 @@ def run_stats_only(args) -> int:
         rejected.sort(key=lambda row: (-row[1].games, row[1].win_rate, row[0]))
         lines.append(f"    {label}: " + ("; ".join(f"{ROLE_NAMES[role]} ({stats_text(stats)})" for role, stats in rejected) or "-"))
 
+    if args.ranked_queue == "aram":
+        del lines[lines.index("Lane") - 1:]
     recommendation_start = len(lines)
     not_recommended = ["", "Not Recommended"]
-    for role in (None, *POSITION_ORDER):
-        heading = ROLE_NAMES[role] if role else "All Lanes"
+    for role in ((None,) if args.ranked_queue == "aram" else (None, *POSITION_ORDER)):
+        heading = ROLE_NAMES[role] if role else ("ARAM" if args.ranked_queue == "aram" else "All Lanes")
         lines.extend(["", heading])
         not_recommended.extend(["", heading])
         groups = (
@@ -100,6 +102,8 @@ def run_stats_only(args) -> int:
 
 
 def ban_recommendation_lines(args, features) -> list[str]:
+    if args.ranked_queue == "aram":
+        return []
     index = load_player_prune_index(args.opponent_stats, profiles=args.profiles, ranked_queue=args.ranked_queue)
     lines = ["", "Ban Recommendations"]
     if index is None or not index.overall_by_champion:

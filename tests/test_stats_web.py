@@ -12,9 +12,12 @@ class StatsWebTest(unittest.TestCase):
             path = Path(directory) / "stats.csv"
             path.write_text("player,champion_id,champion_name,role,queue_id,games,wins,losses\n"
                             "alice,1,Annie,middle,420,20,12,8\n"
+                            "alice,1,Annie,aram,450,100,75,25\n"
                             "alice,2,Olaf,top,440,30,5,25\n")
             args = SimpleNamespace(player_stats=path, opponent_stats=path, champion_features=Path(directory)/"missing.csv", champion_blacklist=Path(directory)/"blacklist.txt", profiles=None, ranked_queue="all")
             data = stats_payload(args, {"queue": ["soloduo"]})
+            aram = stats_payload(args, {"queue": ["aram"]})
+            ranked = stats_payload(args, {"queue": ["all"]})
         overall = data["scopes"]["all"]["picks"][0]
         mid = data["scopes"]["middle"]["picks"][0]
         top = data["scopes"]["top"]["picks"][0]
@@ -23,3 +26,8 @@ class StatsWebTest(unittest.TestCase):
         self.assertEqual(top["recommended"], [])
         self.assertEqual(len(top["rejected"]), 2)
         self.assertTrue(next(r for r in data["lanes"] if r["role"] == "middle")["soft"])
+        self.assertTrue(aram["is_aram"])
+        self.assertEqual(aram["lanes"], [])
+        self.assertEqual(set(aram["scopes"]), {"all"})
+        self.assertEqual(aram["scopes"]["all"]["picks"][0]["recommended"][0]["games"], 100)
+        self.assertEqual(ranked["scopes"]["all"]["picks"][0]["recommended"][0]["games"], 20)

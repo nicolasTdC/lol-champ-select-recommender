@@ -65,7 +65,7 @@ class PlayerPruneIndex:
         rows = [
             (role, stats)
             for role, stats in self.by_role.items()
-            if stats.games >= MIN_GAMES and stats.win_rate >= LANE_HARD_MIN_WIN_RATE
+            if role in POSITION_ORDER and stats.games >= MIN_GAMES and stats.win_rate >= LANE_HARD_MIN_WIN_RATE
         ]
         return sorted(rows, key=lambda item: (-item[1].win_rate, -item[1].games, item[0]))
 
@@ -80,7 +80,7 @@ class PlayerPruneIndex:
 
 
 def load_player_prune_index(path: str | Path, *, profiles: list[str] | None = None, ranked_queue: str = "all") -> PlayerPruneIndex | None:
-    queues = {"all": {420, 440}, "soloduo": {420}, "flex": {440}}[ranked_queue]
+    queues = {"all": {420, 440}, "soloduo": {420}, "flex": {440}, "aram": {450}}[ranked_queue]
     prune_path = Path(path)
     if not prune_path.is_file():
         return None
@@ -220,7 +220,7 @@ def passes_extrapolated_threshold(stats: PruneStats | None) -> bool:
 
 def normalize_role(value: Any) -> str:
     role = str(value or "").strip().lower()
-    return role if role in POSITION_ORDER else ""
+    return role if role in (*POSITION_ORDER, "aram") else ""
 
 
 def _accumulate(bucket: dict[int, list[int]], champion_id: int, games: int, wins: int, losses: int) -> None:

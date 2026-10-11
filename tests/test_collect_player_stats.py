@@ -7,6 +7,19 @@ from lol_champ_select_recommender.collect_player_stats import collect_player_sta
 
 
 class CollectPlayerStatsTest(unittest.TestCase):
+    def test_aram_records_without_inferred_lanes(self):
+        from lol_champ_select_recommender.collect_player_stats import _accumulate_player_match
+
+        match = {"info": {"queueId": 450, "participants": [
+            {"puuid": "me", "participantId": 1, "championId": 1, "teamPosition": "", "win": True}
+        ]}}
+        aggregates = {}
+        with patch("lol_champ_select_recommender.collect_player_stats._participant_roles") as infer:
+            _accumulate_player_match(aggregates, match, "me", "alice", Mock())
+        infer.assert_not_called()
+        self.assertEqual(list(aggregates), [("alice", 1, "aram", 450)])
+        self.assertEqual(next(iter(aggregates.values()))["wins"], 1)
+
     def test_incremental_preserves_other_profiles_and_queues(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "stats.csv"

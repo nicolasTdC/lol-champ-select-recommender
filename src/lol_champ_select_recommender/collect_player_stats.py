@@ -23,6 +23,9 @@ def main() -> int:
     if not args.riot_id:
         print("Error: pass at least one --riot-id", file=sys.stderr)
         return 1
+    if 450 in args.queue and args.match_type == "ranked":
+        print("Error: ARAM is not ranked. Omit --match-type when collecting queue 450.", file=sys.stderr)
+        return 1
 
     if args.cached_only:
         from types import SimpleNamespace
@@ -135,15 +138,15 @@ def parse_args() -> argparse.Namespace:
         "--queue",
         type=int,
         nargs="+",
-        choices=[420, 440],
+        choices=[420, 440, 450],
         default=[420, 440],
-        help="Ranked queues to sample: 420 Solo/Duo, 440 Flex. Default: both.",
+        help="Queues: 420 Solo/Duo, 440 Flex, 450 ARAM. Default: both ranked queues.",
     )
     parser.add_argument(
         "--match-type",
-        default="ranked",
+        default=None,
         choices=["ranked", "normal", "tourney", "tutorial"],
-        help="Match type filter. Default: ranked",
+        help="Optional match type filter. Default: none (queue determines game mode).",
     )
     parser.add_argument(
         "--matches-per-player",
@@ -221,7 +224,7 @@ def collect_player_stats(
                 continue
             info = match.get("info", {})
             queue_id = info.get("queueId")
-            if queue_id not in (420, 440):
+            if queue_id not in (420, 440, 450):
                 continue
             for participant in info.get("participants", []):
                 puuid = str(participant.get("puuid"))
@@ -352,11 +355,11 @@ def _accumulate_player_match(
     if not isinstance(info, dict):
         return
     queue_id = _as_int(info.get("queueId"))
-    if queue_id not in (420, 440):
+    if queue_id not in (420, 440, 450):
         return
 
     participants = [participant for participant in info.get("participants", []) if isinstance(participant, dict)]
-    participant_roles = _participant_roles(participants, static_data)
+    participant_roles = _participant_roles(participants, static_data) if queue_id != 450 else {}
     for participant in participants:
         if str(participant.get("puuid")) != puuid:
             continue
@@ -366,7 +369,7 @@ def _accumulate_player_match(
         if champion_id is None or participant_id is None:
             return
 
-        role = participant_roles.get(participant_id) or str(participant.get("teamPosition") or "").lower()
+        role = "aram" if queue_id == 450 else participant_roles.get(participant_id) or str(participant.get("teamPosition") or "").lower()
         if not role:
             return
 

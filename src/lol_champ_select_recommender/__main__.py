@@ -111,7 +111,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--web", action="store_true", help="Serve offline stats UI on localhost; no client or model required.")
     parser.add_argument("--port", type=int, default=8765, help="Local web UI port. Default: 8765")
     parser.add_argument("--stats-only", action="store_true", help="Show player-stat recommendations offline and exit; no client or model required.")
-    parser.add_argument("--ranked-queue", choices=["all", "soloduo", "flex"], default="all", help="Queue filter for --stats-only. Default: all ranked.")
+    parser.add_argument("--ranked-queue", choices=["all", "soloduo", "flex", "aram"], default="all", help="Queue filter for offline stats, including ARAM. Default: all ranked (excludes ARAM).")
     parser.add_argument("--opponent-stats", default="data/processed/player_enemy_champion_role_stats.csv", help="Personal results against enemy champions for offline ban recommendations.")
     parser.add_argument("--profiles", nargs="+", help="Player names or Riot IDs to include in --stats-only. Default: all profiles in --player-stats.")
     parser.add_argument(

@@ -20,7 +20,7 @@ def read_rows(path):
 
 def stats_payload(args, query):
     queue = query.get("queue", [args.ranked_queue])[0]
-    if queue not in ("all", "soloduo", "flex"):
+    if queue not in ("all", "soloduo", "flex", "aram"):
         raise ValueError("Invalid ranked queue")
     profiles = query.get("profile", args.profiles)
     rows = read_rows(args.player_stats)
@@ -40,10 +40,10 @@ def stats_payload(args, query):
                 "wins": stats.wins, "losses": stats.losses, "wr": stats.win_rate if stats.games else None,
                 "image": f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{key}.png" if key and version else None}
 
-    result = {"profiles": available, "selected_profiles": profiles or available, "scopes": {}, "lanes": [],
-              "has_stats": bool(index and index.overall_by_champion), "has_bans": bool(enemy and enemy.overall_by_champion)}
-    for role in (None, *POSITION_ORDER):
-        scope = {"name": ROLE_NAMES[role] if role else "All Lanes", "picks": [], "bans": []}
+    result = {"is_aram": queue == "aram", "profiles": available, "selected_profiles": profiles or available, "scopes": {}, "lanes": [],
+              "has_stats": bool(index and index.overall_by_champion), "has_bans": queue != "aram" and bool(enemy and enemy.overall_by_champion)}
+    for role in ((None,) if queue == "aram" else (None, *POSITION_ORDER)):
+        scope = {"name": ROLE_NAMES[role] if role else ("ARAM" if queue == "aram" else "All Lanes"), "picks": [], "bans": []}
         if index:
             for extrapolated in (False, True):
                 for whitelisted in (False, True):
@@ -59,7 +59,7 @@ def stats_payload(args, query):
                         items.sort(key=lambda row: (-row["games"], -(row["wr"] or 0), row["name"]))
                     label = ("Whitelisted " if whitelisted else "") + ("Extrapolated " if extrapolated else "") + ("Hard" if role else "Soft")
                     scope["picks"].append({"label": label, "recommended": accepted, "rejected": rejected})
-        if enemy:
+        if enemy and queue != "aram":
             bucket = enemy.by_role_by_champion.get(role, {}) if role else enemy.overall_by_champion
             for extrapolated in (False, True):
                 banned = [entry(cid, stats) for cid, stats in bucket.items() if
@@ -68,7 +68,7 @@ def stats_payload(args, query):
                 banned.sort(key=lambda row: (-row["games"], row["wr"], row["name"]))
                 scope["bans"].append({"label": ("Extrapolated " if extrapolated else "") + ("Hard" if role else "Soft"), "rows": banned})
         result["scopes"][role or "all"] = scope
-    if index:
+    if index and queue != "aram":
         for role in POSITION_ORDER:
             stats = index.by_role.get(role, zero)
             result["lanes"].append({"role": role, "name": ROLE_NAMES[role], "games": stats.games,
